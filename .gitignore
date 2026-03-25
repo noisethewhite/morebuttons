@@ -1,10 +1,14 @@
-**/.vscode/
 .idea/
 *.sublime-project
 *.sublime-workspace
 *.swp
 *.swo
 *~
+
+# VS Code / Cursor: keep shared config; omit machine-local or credential-heavy files
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 
 **/.env
 .env.local
