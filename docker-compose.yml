@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: morebuttons
+      POSTGRES_PASSWORD: morebuttons
+      POSTGRES_DB: morebuttons
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/00-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U morebuttons -d morebuttons"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://morebuttons:morebuttons@db:5432/morebuttons
+      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY}
+      SHOPIFY_SECRET: ${SHOPIFY_SECRET}
+      SHOPIFY_API_VERSION: ${SHOPIFY_API_VERSION:-2024-10}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY}
+      # Optional: https://your-tunnel.example (Shopify requires https webhook URLs)
+      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

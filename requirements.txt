@@ -1,0 +1,9 @@
+Flask==3.1.2
+requests==2.32.5
+gunicorn==25.2.0
+pydantic==2.12.5
+redis==7.0.1
+PyJWT==2.11.0
+psycopg2-binary==2.9.11
+SQLAlchemy==2.0.47
+heresy==0.2.8

@@ -1,0 +1,27 @@
+{
+  "name": "morebuttons",
+  "version": "0.1.0",
+  "description": "",
+  "license": "ISC",
+  "author": "Noise The White",
+  "type": "commonjs",
+  "main": "src/frontend/main.tsx",
+  "scripts": {
+    "build": "node ./esbuild.mjs",
+    "docker:heroku": "bash scripts/docker-heroku-push.sh",
+    "docker:heroku:release": "bash scripts/docker-heroku-release.sh",
+    "docker:heroku:deploy": "npm run docker:heroku && npm run docker:heroku:release"
+  },
+  "dependencies": {
+    "esbuild": "^0.27.2",
+    "prismjs": "^1.30.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/prismjs": "^1.26.6",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

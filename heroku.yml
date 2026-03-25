@@ -1,0 +1,15 @@
+# Heroku Container stack: build from Dockerfile, run web process, release creates DB schema.
+# One-time: heroku stack:set container -a YOUR_APP
+# Add Postgres: heroku addons:create heroku-postgresql:essential-0 -a YOUR_APP
+# Config: heroku config:set SHOPIFY_API_KEY=... SHOPIFY_SECRET=... SHOPIFY_API_VERSION=2024-10 FLASK_SECRET_KEY=... -a YOUR_APP
+# Deploy: git push heroku main
+
+build:
+  docker:
+    web: Dockerfile
+
+release:
+  image: web
+  command:
+    - python
+    - /app/scripts/ensure_schema.py
