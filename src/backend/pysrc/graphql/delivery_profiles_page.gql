@@ -1,0 +1,19 @@
+query DeliveryProfilesPage($first: Int!, $after: String) {
+  deliveryProfiles(first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      node {
+        id
+        name
+        profileLocationGroups {
+          locationGroup {
+            id
+          }
+        }
+      }
+    }
+  }
+}

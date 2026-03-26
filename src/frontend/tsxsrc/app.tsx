@@ -1,9 +1,10 @@
-import {ReactNode} from "react";
+import { ReactNode } from "react"
+import ShippingRatesPanel from "./ShippingRatesPanel"
 
 export default function App(): ReactNode {
     return (
-        <div>
-            <h1>Hello, World!</h1>
-        </div>
+        <main>
+            <ShippingRatesPanel />
+        </main>
     )
 }

@@ -7,6 +7,12 @@ from backend.pysrc.security import Security
 from backend.pysrc.database import Database
 from backend.pysrc.environment import Environment
 from backend.pysrc.routes import Routes
+from backend.pysrc.shipping_rates import (
+    adjust_rates_by_name_percent,
+    collect_methods_and_warnings,
+    preview_rate_changes,
+    unique_rate_names,
+)
 
 
 # ESSENTIAL for Gunicorn to see it.
@@ -72,6 +78,82 @@ def oauth():
         Database.AccessTokens.set_token(Server.shop_domain, access_token)
         Web.subscribe_app_uninstalled_webhook(Server.shop_domain, access_token)
     return flask.jsonify({ "oauthSuccess": True })
+
+
+@application.route(Routes.SHIPPING_RATE_NAMES, methods=["GET"])
+def shipping_rate_names():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    try:
+        rows, warnings = collect_methods_and_warnings(Server.shop_domain, token)
+        names = unique_rate_names(rows)
+        return flask.jsonify({ "names": names, "warnings": warnings })
+    except RuntimeError as e:
+        return flask.jsonify({ "error": str(e) }), 502
+
+
+@application.route(Routes.SHIPPING_RATES_PREVIEW, methods=["GET"])
+def shipping_rates_preview():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    name = flask.request.args.get("name", "")
+    percent_raw = flask.request.args.get("percent", "")
+    if not isinstance(name, str) or not name.strip():
+        return flask.jsonify({ "error": "Missing or invalid name" }), 400
+    try:
+        percent = float(percent_raw.strip())
+    except (TypeError, ValueError):
+        return flask.jsonify({ "error": "Invalid percent" }), 400
+    try:
+        profiles, warnings = preview_rate_changes(
+            Server.shop_domain,
+            token,
+            name.strip(),
+            percent,
+        )
+        return flask.jsonify({ "profiles": profiles, "warnings": warnings })
+    except RuntimeError as e:
+        return flask.jsonify({ "error": str(e) }), 502
+
+
+@application.route(Routes.SHIPPING_RATES_ADJUST, methods=["POST"])
+def shipping_rates_adjust():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    raw_body = flask.request.get_json(silent=True)
+    body = raw_body if isinstance(raw_body, dict) else {}
+    name = body.get("name")
+    percent_raw = body.get("percent")
+    if not isinstance(name, str) or not name.strip():
+        return flask.jsonify({ "error": "Missing or invalid name" }), 400
+    if isinstance(percent_raw, bool) or percent_raw is None:
+        return flask.jsonify({ "error": "Invalid percent" }), 400
+    if isinstance(percent_raw, (int, float)):
+        percent = float(percent_raw)
+    elif isinstance(percent_raw, str):
+        try:
+            percent = float(percent_raw.strip())
+        except ValueError:
+            return flask.jsonify({ "error": "Invalid percent" }), 400
+    else:
+        return flask.jsonify({ "error": "Invalid percent" }), 400
+    try:
+        updated, warnings, user_errors = adjust_rates_by_name_percent(
+            Server.shop_domain,
+            token,
+            name.strip(),
+            percent,
+        )
+        return flask.jsonify({
+            "updated": updated,
+            "warnings": warnings,
+            "userErrors": user_errors,
+        })
+    except RuntimeError as e:
+        return flask.jsonify({ "error": str(e) }), 502
 
 
 @application.route("/")

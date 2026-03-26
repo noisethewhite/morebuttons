@@ -4,6 +4,7 @@ from typing import TypeAlias, cast
 from .database import Database
 from .security import Security
 from .routes import Routes
+from .fileloader import FileLoader
 
 
 class Json(object):
@@ -14,22 +15,6 @@ class Json(object):
     Array: TypeAlias = list["Json.Value"]
     Object: TypeAlias = dict[String, "Json.Value"]
     Value: TypeAlias = String | Number | Boolean | Null | Array | Object
-
-
-_WEBHOOK_SUBSCRIPTION_CREATE = """
-mutation webhookSubscriptionCreate(
-  $topic: WebhookSubscriptionTopic!,
-  $webhookSubscription: WebhookSubscriptionInput!
-) {
-  webhookSubscriptionCreate(
-    topic: $topic,
-    webhookSubscription: $webhookSubscription
-  ) {
-    webhookSubscription { id topic uri }
-    userErrors { field message }
-  }
-}
-"""
 
 
 class Web(object):
@@ -63,7 +48,7 @@ class Web(object):
         gql: Json.Value = Web.graphql_send(
             shop_domain,
             access_token,
-            _WEBHOOK_SUBSCRIPTION_CREATE,
+            FileLoader.load("webhook_subscription_create.gql"),
             {
                 "topic": "APP_UNINSTALLED",
                 "webhookSubscription": { "uri": webhook_url },

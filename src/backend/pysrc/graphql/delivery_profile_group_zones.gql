@@ -1,0 +1,73 @@
+query DeliveryProfileGroupZones(
+  $profileId: ID!,
+  $locationGroupId: ID!,
+  $zonesFirst: Int!,
+  $zonesAfter: String
+) {
+  deliveryProfile(id: $profileId) {
+    profileLocationGroups(locationGroupId: $locationGroupId) {
+      locationGroup {
+        id
+      }
+      locationGroupZones(first: $zonesFirst, after: $zonesAfter) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        edges {
+          node {
+            zone {
+              id
+              name
+            }
+            methodDefinitions(first: 250) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              edges {
+                node {
+                  id
+                  name
+                  methodConditions {
+                    field
+                    operator
+                    conditionCriteria {
+                      __typename
+                      ... on MoneyV2 {
+                        amount
+                        currencyCode
+                      }
+                      ... on Weight {
+                        unit
+                        value
+                      }
+                    }
+                  }
+                  rateProvider {
+                    __typename
+                    ... on DeliveryRateDefinition {
+                      id
+                      price {
+                        amount
+                        currencyCode
+                      }
+                    }
+                    ... on DeliveryParticipant {
+                      id
+                      fixedFee {
+                        amount
+                        currencyCode
+                      }
+                      percentageOfRateFee
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

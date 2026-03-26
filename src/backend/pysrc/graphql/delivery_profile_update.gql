@@ -1,0 +1,8 @@
+mutation DeliveryProfileUpdate($id: ID!, $profile: DeliveryProfileInput!) {
+  deliveryProfileUpdate(id: $id, profile: $profile) {
+    userErrors {
+      field
+      message
+    }
+  }
+}

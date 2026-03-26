@@ -1,4 +1,5 @@
 import * as esbuild from "esbuild"
+import fs from "fs"
 
 esbuild.build({
     entryPoints: ["src/frontend/main.tsx"],
@@ -16,4 +17,9 @@ esbuild.build({
         ".ts": "ts",
         ".tsx": "tsx"
     }
+}).then(() => {
+    fs.copyFileSync(
+        "src/frontend/styles/shipping-rates.css",
+        "dist/shipping-rates.css"
+    )
 });
