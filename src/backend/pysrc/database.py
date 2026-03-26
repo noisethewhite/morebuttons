@@ -173,3 +173,48 @@ class Database(object):
                 .delete(self._table) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
             Database.execute(statement)
+
+    @heresy.singleton
+    class MutationAllow(object):
+        TABLE_NAME: str = "shop_mutation_allow"
+        SCHEMA: str = "00_secrets"
+
+        class Columns(enum.StrEnum):
+            DOMAIN = "shop_domain"
+            ALLOW = "allow_graphql_mutations"
+
+        _metadata: sqla.MetaData
+        _table: sqla.Table
+
+        def __init__(self) -> None:
+            self._metadata = sqla.MetaData()
+            self._table = sqla.Table(
+                self.TABLE_NAME,
+                self._metadata,
+                sqla.Column(self.Columns.DOMAIN, sqla.Text, primary_key=True),
+                sqla.Column(self.Columns.ALLOW, sqla.Boolean, nullable=False, server_default=sqla.false()),
+                schema=self.SCHEMA,
+            )
+            self._metadata.create_all(Database.engine)
+
+        @heresy.singletonmethod
+        def get_allow(self, shop_domain: str) -> bool:
+            statement = sqla \
+                .select(self._table.c[self.Columns.ALLOW]) \
+                .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
+            row = Database.execute(statement, bool)
+            return bool(row) if row is not None else False
+
+        @heresy.singletonmethod
+        def set_allow(self, shop_domain: str, allow: bool) -> None:
+            statement = psql \
+                .insert(self._table) \
+                .values({
+                    self.Columns.DOMAIN: shop_domain,
+                    self.Columns.ALLOW: allow,
+                }) \
+                .on_conflict_do_update(
+                    index_elements=[self.Columns.DOMAIN],
+                    set_={self.Columns.ALLOW: allow},
+                )
+            Database.execute(statement)

@@ -4,6 +4,7 @@ from backend.pysrc.web_types import Json
 import flask
 from werkzeug.wrappers.response import Response
 from backend.pysrc.server import Server
+from backend.pysrc.graphql import MutationsBlockedError
 from backend.pysrc.web import Web
 from backend.pysrc.security import Security
 from backend.pysrc.database import Database
@@ -42,6 +43,7 @@ CONTENT_SECURITY_POLICY = " ".join([
 def init_graphql_request_g() -> None:
     flask.g.graphql_queries = 0
     flask.g.graphql_mutations = 0
+    flask.g.allow_graphql_mutations = False
 
 
 @application.before_request
@@ -49,6 +51,16 @@ def protect_api() -> None:
     if flask.request.path.startswith(Routes.API):
         Server.session_token = Security.get_session_token()
         Server.shop_domain = Security.get_shop_domain(Server.session_token)
+
+
+@application.before_request
+def sync_mutation_allow_to_g() -> None:
+    if not flask.request.path.startswith(Routes.API):
+        return
+    sd = Server.shop_domain
+    if not sd:
+        return
+    flask.g.allow_graphql_mutations = Database.MutationAllow.get_allow(sd)
 
 @application.after_request
 def set_csp(resp: Response) -> Response:
@@ -68,6 +80,8 @@ def add_graphql_request_count_headers(resp: Response) -> Response:
 
 @application.errorhandler(Exception)
 def handle_exception(e: Exception) -> tuple[Response, int]:
+    if isinstance(e, MutationsBlockedError):
+        return flask.jsonify({ "error": str(e), "code": "MUTATIONS_BLOCKED" }), 403
     print(str(e), file=sys.stderr)
     return flask.jsonify({ "error": "Internal server error" }), 500
 
@@ -211,6 +225,29 @@ def shipping_rates_adjust():
         })
     except RuntimeError as e:
         return flask.jsonify({ "error": str(e) }), 502
+
+
+@application.route(Routes.GRAPHQL_MUTATION_ALLOW, methods=["GET", "POST"])
+def graphql_mutation_allow():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    if flask.request.method == "GET":
+        return flask.jsonify({
+            "allowMutations": Database.MutationAllow.get_allow(Server.shop_domain),
+        })
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    am = body.get("allowMutations")
+    if isinstance(am, bool):
+        allow = am
+    elif isinstance(am, str) and am.lower() in ("true", "false"):
+        allow = am.lower() == "true"
+    else:
+        return flask.jsonify({ "error": "allowMutations must be a boolean" }), 400
+    Database.MutationAllow.set_allow(Server.shop_domain, allow)
+    flask.g.allow_graphql_mutations = allow
+    return flask.jsonify({ "allowMutations": allow })
 
 
 @application.route("/")

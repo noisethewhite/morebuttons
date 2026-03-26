@@ -25,6 +25,7 @@ interface AdjustResponse {
     warnings: string[]
     userErrors: string[]
     error?: string
+    code?: string
 }
 
 interface PreviewRow {
@@ -296,7 +297,11 @@ export default function ShippingRatesPanel(): ReactNode {
             if (!res.ok) {
                 setStatus({
                     kind: "err",
-                    text: data.error ?? `Request failed (${res.status}).`,
+                    text:
+                        data.code === "MUTATIONS_BLOCKED"
+                            ? (data.error ??
+                              "Mutations are disabled. Turn on Allow mutations in the GraphQL bar.")
+                            : (data.error ?? `Request failed (${res.status}).`),
                 })
                 return
             }

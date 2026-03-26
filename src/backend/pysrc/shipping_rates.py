@@ -3,7 +3,7 @@ from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal, cast
 from .fileloader import FileLoader
-from .web import Web
+from .graphql import GraphQL
 from .web_types import Json
 
 
@@ -165,7 +165,7 @@ def collect_methods_and_warnings(
 
     after_profiles: str | None = None
     while True:
-        gql = Web.graphql_send(
+        gql = GraphQL.send(
             shop_domain,
             access_token,
             q_profiles,
@@ -240,7 +240,7 @@ def _append_zone_methods(
 ) -> None:
     after_zones: str | None = None
     while True:
-        gql = Web.graphql_send(
+        gql = GraphQL.send(
             shop_domain,
             access_token,
             q_zones,
@@ -965,7 +965,7 @@ def adjust_rates_by_name_percent(
                     }
                 )
             for chunk in _chunks(zones_payload, 5):
-                gql = Web.graphql_send(
+                gql = GraphQL.send(
                     shop_domain,
                     access_token,
                     mut,
