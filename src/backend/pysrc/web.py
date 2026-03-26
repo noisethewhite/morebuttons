@@ -1,24 +1,21 @@
 import requests
 from .environment import Environment
-from typing import TypeAlias, cast
+from typing import cast
 from .database import Database
 from .security import Security
 from .routes import Routes
 from .fileloader import FileLoader
-
-
-class Json(object):
-    String: TypeAlias = str
-    Number: TypeAlias = int | float
-    Boolean: TypeAlias = bool
-    Null: TypeAlias = None
-    Array: TypeAlias = list["Json.Value"]
-    Object: TypeAlias = dict[String, "Json.Value"]
-    Value: TypeAlias = String | Number | Boolean | Null | Array | Object | list[Object]
+from .rate_limiter import GraphQLThrottled, graphql_rate_limit, is_graphql_throttled_payload
+from .web_types import Json
 
 
 class Web(object):
     @staticmethod
+    @graphql_rate_limit(
+        min_interval_seconds=0.15,
+        throttle_cooldown_seconds=0.65,
+        max_throttle_retries=12,
+    )
     def graphql_send(
         shop_domain: str,
         access_token: str,
@@ -39,8 +36,20 @@ class Web(object):
             },
             timeout=20
         )
+        if resp.status_code == 429:
+            ra = resp.headers.get("Retry-After")
+            delay: float | None = None
+            if ra is not None:
+                try:
+                    delay = float(ra)
+                except ValueError:
+                    delay = None
+            raise GraphQLThrottled(delay)
         resp.raise_for_status()
-        return cast(Json.Value, resp.json())
+        payload = cast(Json.Value, resp.json())
+        if isinstance(payload, dict) and is_graphql_throttled_payload(payload):
+            raise GraphQLThrottled()
+        return payload
 
     @staticmethod
     def subscribe_app_uninstalled_webhook(shop_domain: str, access_token: str) -> None:

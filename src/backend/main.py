@@ -1,6 +1,6 @@
 import sys
 from typing import cast
-from backend.pysrc.web import Json
+from backend.pysrc.web_types import Json
 import flask
 from werkzeug.wrappers.response import Response
 from backend.pysrc.server import Server

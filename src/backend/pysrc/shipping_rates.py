@@ -1,11 +1,10 @@
 from __future__ import annotations
-
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 from typing import cast
-
 from .fileloader import FileLoader
-from .web import Json, Web
+from .web import Web
+from .web_types import Json
 
 
 def _extract_errors(gql: Json.Value) -> list[str] | None:
