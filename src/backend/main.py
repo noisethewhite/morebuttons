@@ -8,6 +8,7 @@ from backend.pysrc.web import Web
 from backend.pysrc.security import Security
 from backend.pysrc.database import Database
 from backend.pysrc.environment import Environment
+from backend.pysrc.graphql_counters import get_totals
 from backend.pysrc.routes import Routes
 from backend.pysrc.shipping_rates import (
     adjust_rates_by_name_percent,
@@ -196,6 +197,15 @@ def shipping_rates_adjust():
         })
     except RuntimeError as e:
         return flask.jsonify({ "error": str(e) }), 502
+
+
+@application.route(Routes.GRAPHQL_STATS, methods=["GET"])
+def graphql_stats_route():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    q, m = get_totals()
+    return flask.jsonify({ "queries": q, "mutations": m })
 
 
 @application.route("/")

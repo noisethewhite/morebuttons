@@ -5,6 +5,7 @@ from .database import Database
 from .security import Security
 from .routes import Routes
 from .fileloader import FileLoader
+from .graphql_counters import classify_graphql_operation, record_graphql
 from .rate_limiter import GraphQLThrottled, graphql_rate_limit, is_graphql_throttled_payload
 from .web_types import Json
 
@@ -49,6 +50,7 @@ class Web(object):
         payload = cast(Json.Value, resp.json())
         if isinstance(payload, dict) and is_graphql_throttled_payload(payload):
             raise GraphQLThrottled()
+        record_graphql(classify_graphql_operation(query))
         return payload
 
     @staticmethod
