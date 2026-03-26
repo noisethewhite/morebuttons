@@ -78,6 +78,8 @@ function priceChangeKind(current: string, next: string): "up" | "down" | "same" 
 
 const ALL_VALUE = ""
 
+type AdjustmentMode = "percent" | "offset"
+
 export default function ShippingRatesPanel(): ReactNode {
     const [names, setNames] = useState<string[]>([])
     const [profiles, setProfiles] = useState<FilterProfile[]>([])
@@ -87,6 +89,7 @@ export default function ShippingRatesPanel(): ReactNode {
     const [selected, setSelected] = useState("")
     const [profileId, setProfileId] = useState(ALL_VALUE)
     const [zoneId, setZoneId] = useState(ALL_VALUE)
+    const [adjustmentMode, setAdjustmentMode] = useState<AdjustmentMode>("percent")
     const [percent, setPercent] = useState("")
     const [loadingNames, setLoadingNames] = useState(true)
     const [submitting, setSubmitting] = useState(false)
@@ -173,6 +176,9 @@ export default function ShippingRatesPanel(): ReactNode {
                         name: selected,
                         percent: p,
                     })
+                    if (adjustmentMode === "offset") {
+                        q.set("mode", "offset")
+                    }
                     if (profileId) {
                         q.set("profileId", profileId)
                     }
@@ -211,7 +217,7 @@ export default function ShippingRatesPanel(): ReactNode {
             cancelled = true
             window.clearTimeout(handle)
         }
-    }, [selected, percent, profileId, zoneId, pendingConfirmation])
+    }, [selected, percent, profileId, zoneId, pendingConfirmation, adjustmentMode])
 
     const zoneOptions: FilterZone[] = useMemo(() => {
         if (profileId) {
@@ -243,7 +249,13 @@ export default function ShippingRatesPanel(): ReactNode {
         }
         const p = percent.trim()
         if (p === "" || Number.isNaN(Number(p))) {
-            setStatus({ kind: "err", text: "Enter a valid percent (e.g. 10 or -5)." })
+            setStatus({
+                kind: "err",
+                text:
+                    adjustmentMode === "percent"
+                        ? "Enter a valid percent (e.g. 10 or -5)."
+                        : "Enter a valid amount (e.g. 5 or -2).",
+            })
             return
         }
         if (previewLoading) {
@@ -275,6 +287,7 @@ export default function ShippingRatesPanel(): ReactNode {
                 body: JSON.stringify({
                     name: selected,
                     percent: Number(p),
+                    ...(adjustmentMode === "offset" ? { mode: "offset" } : {}),
                     ...(profileId ? { profileId } : {}),
                     ...(zoneId ? { zoneId } : {}),
                 }),
@@ -303,6 +316,9 @@ export default function ShippingRatesPanel(): ReactNode {
             })
             setPendingConfirmation(false)
             const q = new URLSearchParams({ name: selected, percent: p })
+            if (adjustmentMode === "offset") {
+                q.set("mode", "offset")
+            }
             if (profileId) {
                 q.set("profileId", profileId)
             }
@@ -423,19 +439,65 @@ export default function ShippingRatesPanel(): ReactNode {
                                     ))}
                                 </select>
                             </div>
-                            <div className="shipping-rates__field shipping-rates__field--percent">
-                                <label htmlFor="shipping-rate-percent">Percent</label>
-                                <input
-                                    id="shipping-rate-percent"
-                                    type="text"
-                                    inputMode="decimal"
-                                    autoComplete="off"
-                                    placeholder="e.g. 10"
-                                    value={percent}
-                                    onChange={(e) => setPercent(e.target.value)}
-                                    disabled={busy || controlsLocked}
-                                    aria-describedby="shipping-rate-percent-hint"
-                                />
+                            <div className="shipping-rates__field-group shipping-rates__field-group--value">
+                                <div className="shipping-rates__field shipping-rates__field--mode">
+                                    <span
+                                        id="shipping-rate-adjustment-label"
+                                        className="shipping-rates__segment-label"
+                                    >
+                                        Adjustment
+                                    </span>
+                                    <div
+                                        className="shipping-rates__segment"
+                                        role="group"
+                                        aria-labelledby="shipping-rate-adjustment-label"
+                                    >
+                                        <button
+                                            type="button"
+                                            className={
+                                                adjustmentMode === "percent"
+                                                    ? "shipping-rates__segment-btn shipping-rates__segment-btn--active"
+                                                    : "shipping-rates__segment-btn"
+                                            }
+                                            aria-pressed={adjustmentMode === "percent"}
+                                            disabled={busy || controlsLocked}
+                                            onClick={() => setAdjustmentMode("percent")}
+                                        >
+                                            Percent
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={
+                                                adjustmentMode === "offset"
+                                                    ? "shipping-rates__segment-btn shipping-rates__segment-btn--active"
+                                                    : "shipping-rates__segment-btn"
+                                            }
+                                            aria-pressed={adjustmentMode === "offset"}
+                                            disabled={busy || controlsLocked}
+                                            onClick={() => setAdjustmentMode("offset")}
+                                        >
+                                            Amount
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="shipping-rates__field shipping-rates__field--percent">
+                                    <label htmlFor="shipping-rate-percent">
+                                        {adjustmentMode === "percent" ? "Percent" : "Amount"}
+                                    </label>
+                                    <input
+                                        id="shipping-rate-percent"
+                                        type="text"
+                                        inputMode="decimal"
+                                        autoComplete="off"
+                                        placeholder={
+                                            adjustmentMode === "percent" ? "e.g. 10" : "e.g. 5 or -2"
+                                        }
+                                        value={percent}
+                                        onChange={(e) => setPercent(e.target.value)}
+                                        disabled={busy || controlsLocked}
+                                        aria-describedby="shipping-rate-percent-hint"
+                                    />
+                                </div>
                             </div>
                             <button
                                 type="submit"
@@ -446,7 +508,18 @@ export default function ShippingRatesPanel(): ReactNode {
                             </button>
                         </div>
                         <p id="shipping-rate-percent-hint" className="shipping-rates__list-hint">
-                            Positive increases price; negative decreases (e.g. -10 for 10% off).
+                            {adjustmentMode === "percent" ? (
+                                <>
+                                    Positive increases price; negative decreases (e.g. -10 for 10%
+                                    off).
+                                </>
+                            ) : (
+                                <>
+                                    Adds or subtracts this amount from each rate in its zone
+                                    currency (negative reduces the price; results below zero become
+                                    0).
+                                </>
+                            )}
                         </p>
                     </form>
                     {status.text ? (
@@ -494,7 +567,9 @@ export default function ShippingRatesPanel(): ReactNode {
                         <p className="shipping-rates__loading">Updating preview…</p>
                     ) : !previewReady ? (
                         <p className="shipping-rates__preview-empty">
-                            Choose a rate name and enter a percent to list affected rates.
+                            Choose a rate name and enter a{" "}
+                            {adjustmentMode === "percent" ? "percent" : "fixed amount change"} to
+                            list affected rates.
                         </p>
                     ) : previewError ? (
                         <p className="shipping-rates__preview-empty" role="alert">
@@ -503,7 +578,7 @@ export default function ShippingRatesPanel(): ReactNode {
                     ) : !preview || preview.length === 0 ? (
                         <p className="shipping-rates__preview-empty">
                             No adjustable rates match this name (or none have a fixed price to
-                            scale).
+                            update).
                         </p>
                     ) : (
                         <div className="shipping-rates__preview">

@@ -1,5 +1,5 @@
 import sys
-from typing import cast
+from typing import Literal, cast
 from backend.pysrc.web_types import Json
 import flask
 from werkzeug.wrappers.response import Response
@@ -117,6 +117,12 @@ def shipping_rates_preview():
         return flask.jsonify({ "error": "Invalid percent" }), 400
     profile_id = flask.request.args.get("profileId", "").strip() or None
     zone_id = flask.request.args.get("zoneId", "").strip() or None
+    mode_raw = flask.request.args.get("mode", "").strip().lower()
+    adjustment_mode: Literal["percent", "offset"] = (
+        "offset"
+        if mode_raw in ("offset", "absolute")
+        else "percent"
+    )
     try:
         profiles, warnings = preview_rate_changes(
             Server.shop_domain,
@@ -125,6 +131,7 @@ def shipping_rates_preview():
             percent,
             profile_id,
             zone_id,
+            adjustment_mode,
         )
         return flask.jsonify({ "profiles": profiles, "warnings": warnings })
     except RuntimeError as e:
@@ -165,6 +172,13 @@ def shipping_rates_adjust():
         if isinstance(zone_id_raw, str) and zone_id_raw.strip()
         else None
     )
+    mode_body = body.get("mode")
+    adjustment_mode_post: Literal["percent", "offset"] = (
+        "offset"
+        if isinstance(mode_body, str)
+        and mode_body.strip().lower() in ("offset", "absolute")
+        else "percent"
+    )
     try:
         updated, warnings, user_errors = adjust_rates_by_name_percent(
             Server.shop_domain,
@@ -173,6 +187,7 @@ def shipping_rates_adjust():
             percent,
             profile_id,
             zone_id,
+            adjustment_mode_post,
         )
         return flask.jsonify({
             "updated": updated,

@@ -66,6 +66,76 @@
     min-width: 9rem;
 }
 
+.shipping-rates__field-group--value {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 7.5rem;
+}
+
+.shipping-rates__field--mode {
+    min-width: 7.5rem;
+}
+
+.shipping-rates__segment-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.shipping-rates__segment {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    border: 1px solid #c4c4c4;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #e5e7eb;
+}
+
+.shipping-rates__segment-btn {
+    flex: 1;
+    min-width: 0;
+    padding: 0.45rem 0.55rem;
+    font: inherit;
+    font-size: 0.8125rem;
+    border: none;
+    background: transparent;
+    color: #4b5563;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.shipping-rates__segment-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.45);
+    color: #1f2937;
+}
+
+.shipping-rates__segment-btn--active {
+    background: #fff;
+    color: #111827;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.shipping-rates__segment-btn + .shipping-rates__segment-btn {
+    border-left: 1px solid #c4c4c4;
+}
+
+.shipping-rates__segment-btn:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+    position: relative;
+    z-index: 1;
+}
+
+.shipping-rates__segment-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .shipping-rates__field--percent {
     min-width: 6rem;
 }

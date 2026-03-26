@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
-from typing import cast
+from typing import Literal, cast
 from .fileloader import FileLoader
 from .web import Web
 from .web_types import Json
@@ -34,6 +34,13 @@ def _data(gql: Json.Value) -> Json.Object | None:
 def _scale_money(amount: str, factor: Decimal) -> str:
     d = Decimal(amount)
     return str((d * factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _offset_money(amount: str, delta: Decimal) -> str:
+    d = Decimal(amount) + delta
+    if d < 0:
+        d = Decimal(0)
+    return str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _method_update_input(
@@ -81,6 +88,60 @@ def _method_update_input(
                 "id": pid,
                 "fixedFee": {
                     "amount": _scale_money(amt, factor),
+                    "currencyCode": cur,
+                },
+            },
+        }
+    return None
+
+
+def _method_update_input_offset(
+    method: Json.Object,
+    delta: Decimal,
+) -> Json.Object | None:
+    mid = method.get("id")
+    if not isinstance(mid, str):
+        return None
+    rp = method.get("rateProvider")
+    if not isinstance(rp, dict):
+        return None
+    typename = rp.get("__typename")
+    if typename == "DeliveryRateDefinition":
+        rid = rp.get("id")
+        price = rp.get("price")
+        if not isinstance(rid, str) or not isinstance(price, dict):
+            return None
+        amt = price.get("amount")
+        cur = price.get("currencyCode")
+        if not isinstance(amt, str) or not isinstance(cur, str):
+            return None
+        new_amt = _offset_money(amt, delta)
+        return {
+            "id": mid,
+            "rateDefinition": {
+                "id": rid,
+                "price": {
+                    "amount": new_amt,
+                    "currencyCode": cur,
+                },
+            },
+        }
+    if typename == "DeliveryParticipant":
+        pid = rp.get("id")
+        ff = rp.get("fixedFee")
+        if not isinstance(pid, str) or not isinstance(ff, dict):
+            return None
+        amt = ff.get("amount")
+        cur = ff.get("currencyCode")
+        if not isinstance(amt, str) or not isinstance(cur, str):
+            return None
+        new_amt = _offset_money(amt, delta)
+        return {
+            "id": mid,
+            "participant": {
+                "id": pid,
+                "fixedFee": {
+                    "amount": new_amt,
                     "currencyCode": cur,
                 },
             },
@@ -404,6 +465,37 @@ def _price_pair(method: Json.Object, factor: Decimal) -> tuple[str, str] | None:
     return None
 
 
+def _price_pair_offset(
+    method: Json.Object,
+    delta: Decimal,
+) -> tuple[str, str] | None:
+    rp = method.get("rateProvider")
+    if not isinstance(rp, dict):
+        return None
+    typename = rp.get("__typename")
+    if typename == "DeliveryRateDefinition":
+        price = rp.get("price")
+        if not isinstance(price, dict):
+            return None
+        amt = price.get("amount")
+        cur = price.get("currencyCode")
+        if not isinstance(amt, str) or not isinstance(cur, str):
+            return None
+        new_amt = _offset_money(amt, delta)
+        return (f"{amt} {cur}", f"{new_amt} {cur}")
+    if typename == "DeliveryParticipant":
+        ff = rp.get("fixedFee")
+        if not isinstance(ff, dict):
+            return None
+        amt = ff.get("amount")
+        cur = ff.get("currencyCode")
+        if not isinstance(amt, str) or not isinstance(cur, str):
+            return None
+        new_amt = _offset_money(amt, delta)
+        return (f"{amt} {cur}", f"{new_amt} {cur}")
+    return None
+
+
 def preview_rate_changes(
     shop_domain: str,
     access_token: str,
@@ -411,13 +503,19 @@ def preview_rate_changes(
     percent: float,
     profile_id: str | None = None,
     zone_id: str | None = None,
+    adjustment_mode: Literal["percent", "offset"] = "percent",
 ) -> tuple[list[Json.Object], list[str]]:
     """
     Returns (profiles, warnings) where each profile has
     id, name, zones: [{ id, name, rows: [{ id, boundary, current, new }] }].
     """
     rows, warnings = collect_methods_and_warnings(shop_domain, access_token)
-    factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
+    factor: Decimal | None = None
+    amount_delta: Decimal | None = None
+    if adjustment_mode == "percent":
+        factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
+    else:
+        amount_delta = Decimal(str(percent))
 
     acc: dict[str, Json.Object] = {}
 
@@ -427,9 +525,16 @@ def preview_rate_changes(
         m = row.get("method")
         if not isinstance(m, dict) or m.get("name") != rate_name:
             continue
-        if _method_update_input(m, factor) is None:
-            continue
-        pair = _price_pair(m, factor)
+        if adjustment_mode == "percent":
+            assert factor is not None
+            if _method_update_input(m, factor) is None:
+                continue
+            pair = _price_pair(m, factor)
+        else:
+            assert amount_delta is not None
+            if _method_update_input_offset(m, amount_delta) is None:
+                continue
+            pair = _price_pair_offset(m, amount_delta)
         if pair is None:
             continue
         cur_s, new_s = pair
@@ -531,12 +636,18 @@ def adjust_rates_by_name_percent(
     percent: float,
     profile_id: str | None = None,
     zone_id: str | None = None,
+    adjustment_mode: Literal["percent", "offset"] = "percent",
 ) -> tuple[int, list[str], list[str]]:
     """
     Returns (updated_method_count, warnings, user_error_messages).
     """
     rows, warnings = collect_methods_and_warnings(shop_domain, access_token)
-    factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
+    factor: Decimal | None = None
+    amount_delta: Decimal | None = None
+    if adjustment_mode == "percent":
+        factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
+    else:
+        amount_delta = Decimal(str(percent))
 
     by_profile: dict[str, dict[str, dict[str, list[Json.Object]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(list))
@@ -551,7 +662,12 @@ def adjust_rates_by_name_percent(
             continue
         if m.get("name") != rate_name:
             continue
-        inp = _method_update_input(m, factor)
+        if adjustment_mode == "percent":
+            assert factor is not None
+            inp = _method_update_input(m, factor)
+        else:
+            assert amount_delta is not None
+            inp = _method_update_input_offset(m, amount_delta)
         if inp is None:
             warnings.append(
                 f"Skipped a rate named {rate_name!r} (unsupported rate type or missing price)."
