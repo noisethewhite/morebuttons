@@ -28,6 +28,23 @@
 
 .shipping-rates__controls {
     min-width: 0;
+    position: relative;
+}
+
+.shipping-rates__controls--locked {
+    pointer-events: none;
+    opacity: 0.72;
+    user-select: none;
+}
+
+.shipping-rates__locked-banner {
+    font-size: 0.8125rem;
+    color: #1e40af;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    padding: 0.5rem 0.65rem;
+    margin: 0 0 0.75rem;
 }
 
 .shipping-rates__row {
@@ -145,6 +162,49 @@
     margin: 0 0 0.65rem;
 }
 
+.shipping-rates__confirm-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.shipping-rates__btn {
+    font: inherit;
+    font-weight: 600;
+    padding: 0.45rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+
+.shipping-rates__btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.shipping-rates__btn--confirm {
+    background: #059669;
+    color: #fff;
+    border-color: #047857;
+}
+
+.shipping-rates__btn--confirm:hover:not(:disabled) {
+    background: #047857;
+}
+
+.shipping-rates__btn--revert {
+    background: #fff;
+    color: #374151;
+    border-color: #d1d5db;
+}
+
+.shipping-rates__btn--revert:hover:not(:disabled) {
+    background: #f9fafb;
+}
+
 .shipping-rates__preview {
     max-height: min(70vh, 36rem);
     overflow-y: auto;
@@ -208,12 +268,25 @@
     gap: 0.75rem 1rem;
     align-items: baseline;
     font-size: 0.8125rem;
-    padding: 0.4rem 0;
+    padding: 0.4rem 0 0.4rem 0.5rem;
+    margin-left: -0.5rem;
     border-bottom: 1px solid #eee;
+    border-left: 3px solid transparent;
+    border-radius: 4px;
 }
 
 .shipping-rates__preview-row:last-child {
     border-bottom: none;
+}
+
+.shipping-rates__preview-row--up {
+    border-left-color: #16a34a;
+    background: linear-gradient(90deg, rgba(22, 163, 74, 0.08) 0%, transparent 70%);
+}
+
+.shipping-rates__preview-row--down {
+    border-left-color: #dc2626;
+    background: linear-gradient(90deg, rgba(220, 38, 38, 0.07) 0%, transparent 70%);
 }
 
 .shipping-rates__preview-boundary {
@@ -227,4 +300,12 @@
     white-space: nowrap;
     color: #111827;
     font-weight: 500;
+}
+
+.shipping-rates__preview-prices--up {
+    color: #15803d;
+}
+
+.shipping-rates__preview-prices--down {
+    color: #b91c1c;
 }

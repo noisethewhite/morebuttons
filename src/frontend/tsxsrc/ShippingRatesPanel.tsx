@@ -40,12 +40,37 @@ interface PreviewResponse {
     error?: string
 }
 
+/** Compare first numeric token in strings like "12.00 USD". */
+function priceChangeKind(current: string, next: string): "up" | "down" | "same" {
+    const parseAmount = (s: string): number | null => {
+        const first = s.trim().split(/\s+/)[0]
+        if (!first) {
+            return null
+        }
+        const n = parseFloat(first.replace(",", ""))
+        return Number.isFinite(n) ? n : null
+    }
+    const a = parseAmount(current)
+    const b = parseAmount(next)
+    if (a === null || b === null) {
+        return "same"
+    }
+    if (b > a) {
+        return "up"
+    }
+    if (b < a) {
+        return "down"
+    }
+    return "same"
+}
+
 export default function ShippingRatesPanel(): ReactNode {
     const [names, setNames] = useState<string[]>([])
     const [selected, setSelected] = useState("")
     const [percent, setPercent] = useState("")
     const [loadingNames, setLoadingNames] = useState(true)
     const [submitting, setSubmitting] = useState(false)
+    const [pendingConfirmation, setPendingConfirmation] = useState(false)
     const [preview, setPreview] = useState<PreviewProfile[] | null>(null)
     const [previewLoading, setPreviewLoading] = useState(false)
     const [previewError, setPreviewError] = useState<string | null>(null)
@@ -102,6 +127,9 @@ export default function ShippingRatesPanel(): ReactNode {
     }, [])
 
     useEffect(() => {
+        if (pendingConfirmation) {
+            return
+        }
         const p = percent.trim()
         if (!selected || p === "" || Number.isNaN(Number(p))) {
             setPreview(null)
@@ -153,9 +181,9 @@ export default function ShippingRatesPanel(): ReactNode {
             cancelled = true
             window.clearTimeout(handle)
         }
-    }, [selected, percent])
+    }, [selected, percent, pendingConfirmation])
 
-    const onSubmit: SubmitEventHandler<HTMLFormElement> = async (e) => {
+    const onSubmitSet: SubmitEventHandler<HTMLFormElement> = (e) => {
         e.preventDefault()
         if (!selected.trim()) {
             setStatus({ kind: "err", text: "Choose a rate name." })
@@ -164,6 +192,26 @@ export default function ShippingRatesPanel(): ReactNode {
         const p = percent.trim()
         if (p === "" || Number.isNaN(Number(p))) {
             setStatus({ kind: "err", text: "Enter a valid percent (e.g. 10 or -5)." })
+            return
+        }
+        if (previewLoading) {
+            setStatus({ kind: "err", text: "Wait for the preview to finish loading." })
+            return
+        }
+        if (!preview || preview.length === 0) {
+            setStatus({
+                kind: "err",
+                text: "No rates match this adjustment. Change the name or percent first.",
+            })
+            return
+        }
+        setStatus({ kind: "idle", text: "" })
+        setPendingConfirmation(true)
+    }
+
+    async function onConfirm(): Promise<void> {
+        const p = percent.trim()
+        if (!selected.trim() || p === "" || Number.isNaN(Number(p))) {
             return
         }
         setSubmitting(true)
@@ -199,6 +247,7 @@ export default function ShippingRatesPanel(): ReactNode {
                 kind: hasErr ? "err" : "ok",
                 text: parts.join(" "),
             })
+            setPendingConfirmation(false)
             const q = new URLSearchParams({ name: selected, percent: p })
             const prevRes = await AppBridge.fetchWithToken(
                 `/api/shipping-rates/preview?${q.toString()}`
@@ -218,10 +267,21 @@ export default function ShippingRatesPanel(): ReactNode {
         }
     }
 
+    function onRevert(): void {
+        setPendingConfirmation(false)
+        setStatus({ kind: "idle", text: "" })
+    }
+
     const busy = loadingNames || submitting
     const pTrim = percent.trim()
     const previewReady =
         Boolean(selected) && pTrim !== "" && !Number.isNaN(Number(pTrim))
+    const controlsLocked = pendingConfirmation
+    const canSet =
+        previewReady &&
+        !previewLoading &&
+        Boolean(preview?.length) &&
+        !pendingConfirmation
 
     return (
         <section className="shipping-rates" aria-labelledby="shipping-rates-heading">
@@ -229,7 +289,19 @@ export default function ShippingRatesPanel(): ReactNode {
                 Adjust shipping rates by name
             </h2>
             <div className="shipping-rates__layout">
-                <div className="shipping-rates__controls">
+                <div
+                    className={
+                        controlsLocked
+                            ? "shipping-rates__controls shipping-rates__controls--locked"
+                            : "shipping-rates__controls"
+                    }
+                    aria-busy={controlsLocked}
+                >
+                    {controlsLocked ? (
+                        <p className="shipping-rates__locked-banner" role="status">
+                            Review the preview and confirm or revert to continue editing.
+                        </p>
+                    ) : null}
                     {loadingNames ? (
                         <p className="shipping-rates__loading">Loading rate names…</p>
                     ) : names.length === 0 ? (
@@ -241,7 +313,7 @@ export default function ShippingRatesPanel(): ReactNode {
                             Applies to every zone in every profile where the rate name matches.
                         </p>
                     )}
-                    <form onSubmit={onSubmit}>
+                    <form onSubmit={onSubmitSet}>
                         <div className="shipping-rates__row">
                             <div className="shipping-rates__field">
                                 <label htmlFor="shipping-rate-name">Rate name</label>
@@ -249,7 +321,7 @@ export default function ShippingRatesPanel(): ReactNode {
                                     id="shipping-rate-name"
                                     value={selected}
                                     onChange={(e) => setSelected(e.target.value)}
-                                    disabled={busy || names.length === 0}
+                                    disabled={busy || names.length === 0 || controlsLocked}
                                 >
                                     {names.map((n) => (
                                         <option key={n} value={n}>
@@ -268,14 +340,14 @@ export default function ShippingRatesPanel(): ReactNode {
                                     placeholder="e.g. 10"
                                     value={percent}
                                     onChange={(e) => setPercent(e.target.value)}
-                                    disabled={busy}
+                                    disabled={busy || controlsLocked}
                                     aria-describedby="shipping-rate-percent-hint"
                                 />
                             </div>
                             <button
                                 type="submit"
                                 className="shipping-rates__set"
-                                disabled={busy || names.length === 0}
+                                disabled={busy || names.length === 0 || !canSet}
                             >
                                 Set
                             </button>
@@ -305,6 +377,26 @@ export default function ShippingRatesPanel(): ReactNode {
                     aria-label="Rates that will change"
                 >
                     <h3 className="shipping-rates__preview-title">Preview</h3>
+                    {pendingConfirmation ? (
+                        <div className="shipping-rates__confirm-bar">
+                            <button
+                                type="button"
+                                className="shipping-rates__btn shipping-rates__btn--confirm"
+                                onClick={() => void onConfirm()}
+                                disabled={submitting || !preview?.length}
+                            >
+                                {submitting ? "Applying…" : "Confirm"}
+                            </button>
+                            <button
+                                type="button"
+                                className="shipping-rates__btn shipping-rates__btn--revert"
+                                onClick={onRevert}
+                                disabled={submitting}
+                            >
+                                Revert
+                            </button>
+                        </div>
+                    ) : null}
                     {previewLoading ? (
                         <p className="shipping-rates__loading">Updating preview…</p>
                     ) : !previewReady ? (
@@ -343,19 +435,34 @@ export default function ShippingRatesPanel(): ReactNode {
                                                 {zone.name || "Unnamed zone"}
                                             </h5>
                                             <ul className="shipping-rates__rate-list">
-                                                {zone.rows.map((row) => (
-                                                    <li
-                                                        key={row.id}
-                                                        className="shipping-rates__preview-row"
-                                                    >
-                                                        <span className="shipping-rates__preview-boundary">
-                                                            {row.boundary}
-                                                        </span>
-                                                        <span className="shipping-rates__preview-prices">
-                                                            {row.current} → {row.new}
-                                                        </span>
-                                                    </li>
-                                                ))}
+                                                {zone.rows.map((row) => {
+                                                    const dir = priceChangeKind(
+                                                        row.current,
+                                                        row.new
+                                                    )
+                                                    const rowClass =
+                                                        dir === "up"
+                                                            ? "shipping-rates__preview-row shipping-rates__preview-row--up"
+                                                            : dir === "down"
+                                                              ? "shipping-rates__preview-row shipping-rates__preview-row--down"
+                                                              : "shipping-rates__preview-row"
+                                                    const priceClass =
+                                                        dir === "up"
+                                                            ? "shipping-rates__preview-prices shipping-rates__preview-prices--up"
+                                                            : dir === "down"
+                                                              ? "shipping-rates__preview-prices shipping-rates__preview-prices--down"
+                                                              : "shipping-rates__preview-prices"
+                                                    return (
+                                                        <li key={row.id} className={rowClass}>
+                                                            <span className="shipping-rates__preview-boundary">
+                                                                {row.boundary}
+                                                            </span>
+                                                            <span className={priceClass}>
+                                                                {row.current} → {row.new}
+                                                            </span>
+                                                        </li>
+                                                    )
+                                                })}
                                             </ul>
                                         </div>
                                     ))}
