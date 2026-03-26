@@ -1,28 +1,19 @@
 import { ReactNode, useEffect, useRef, useState } from "react"
-import AppBridge from "../tssrc/app_bridge"
+import { setGraphqlHeaderListener } from "../tssrc/graphql_fetch_interceptor"
 
 const COOLDOWN_MS = 2000
-const POLL_MS = 400
-
-interface StatsResponse {
-    queries?: number
-    mutations?: number
-    error?: string
-}
 
 export default function GraphqlStatsBar(): ReactNode {
     const [queries, setQueries] = useState(0)
     const [mutations, setMutations] = useState(0)
     const [deltaQ, setDeltaQ] = useState(0)
     const [deltaM, setDeltaM] = useState(0)
-    const lastQRef = useRef<number | null>(null)
-    const lastMRef = useRef<number | null>(null)
+    const deltaQRef = useRef(0)
+    const deltaMRef = useRef(0)
     const qTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const mTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     useEffect(() => {
-        let cancelled = false
-
         const clearQ = () => {
             if (qTimerRef.current) {
                 clearTimeout(qTimerRef.current)
@@ -39,6 +30,7 @@ export default function GraphqlStatsBar(): ReactNode {
         const scheduleQClear = () => {
             clearQ()
             qTimerRef.current = setTimeout(() => {
+                deltaQRef.current = 0
                 setDeltaQ(0)
                 qTimerRef.current = null
             }, COOLDOWN_MS)
@@ -47,49 +39,30 @@ export default function GraphqlStatsBar(): ReactNode {
         const scheduleMClear = () => {
             clearM()
             mTimerRef.current = setTimeout(() => {
+                deltaMRef.current = 0
                 setDeltaM(0)
                 mTimerRef.current = null
             }, COOLDOWN_MS)
         }
 
-        const tick = async () => {
-            try {
-                const res = await AppBridge.fetchWithToken("/api/graphql-stats")
-                const data = (await res.json()) as StatsResponse
-                if (cancelled || !res.ok) {
-                    return
-                }
-                const q = typeof data.queries === "number" ? data.queries : 0
-                const m = typeof data.mutations === "number" ? data.mutations : 0
-                setQueries(q)
-                setMutations(m)
-                if (lastQRef.current === null || lastMRef.current === null) {
-                    lastQRef.current = q
-                    lastMRef.current = m
-                    return
-                }
-                const dq = q - lastQRef.current
-                const dm = m - lastMRef.current
-                lastQRef.current = q
-                lastMRef.current = m
-                if (dq > 0) {
-                    setDeltaQ((p) => p + dq)
-                    scheduleQClear()
-                }
-                if (dm > 0) {
-                    setDeltaM((p) => p + dm)
-                    scheduleMClear()
-                }
-            } catch {
-                /* ignore */
+        const onHeaders = (q: number, m: number) => {
+            if (q > 0) {
+                setQueries((t) => t + q)
+                deltaQRef.current += q
+                setDeltaQ(deltaQRef.current)
+                scheduleQClear()
+            }
+            if (m > 0) {
+                setMutations((t) => t + m)
+                deltaMRef.current += m
+                setDeltaM(deltaMRef.current)
+                scheduleMClear()
             }
         }
 
-        void tick()
-        const interval = setInterval(() => void tick(), POLL_MS)
+        setGraphqlHeaderListener(onHeaders)
         return () => {
-            cancelled = true
-            clearInterval(interval)
+            setGraphqlHeaderListener(null)
             clearQ()
             clearM()
         }
@@ -101,7 +74,11 @@ export default function GraphqlStatsBar(): ReactNode {
             <div className="graphql-stats__counts">
                 <span className="graphql-stats__item">
                     <span className="graphql-stats__label">Queries</span>
-                    <span className="graphql-stats__value">{queries}</span>
+                    <span className="graphql-stats__value">
+                        <span key={queries} className="graphql-stats__bump-target">
+                            {queries}
+                        </span>
+                    </span>
                     <span
                         className={
                             deltaQ > 0
@@ -110,12 +87,21 @@ export default function GraphqlStatsBar(): ReactNode {
                         }
                         aria-hidden={deltaQ === 0}
                     >
-                        {deltaQ > 0 ? `+${deltaQ}` : "\u00a0"}
+                        <span
+                            key={deltaQ > 0 ? deltaQ : "q-idle"}
+                            className="graphql-stats__bump-target"
+                        >
+                            {deltaQ > 0 ? `+${deltaQ}` : "\u00a0"}
+                        </span>
                     </span>
                 </span>
                 <span className="graphql-stats__item">
                     <span className="graphql-stats__label">Mutations</span>
-                    <span className="graphql-stats__value">{mutations}</span>
+                    <span className="graphql-stats__value">
+                        <span key={mutations} className="graphql-stats__bump-target">
+                            {mutations}
+                        </span>
+                    </span>
                     <span
                         className={
                             deltaM > 0
@@ -124,7 +110,12 @@ export default function GraphqlStatsBar(): ReactNode {
                         }
                         aria-hidden={deltaM === 0}
                     >
-                        {deltaM > 0 ? `+${deltaM}` : "\u00a0"}
+                        <span
+                            key={deltaM > 0 ? deltaM : "m-idle"}
+                            className="graphql-stats__bump-target"
+                        >
+                            {deltaM > 0 ? `+${deltaM}` : "\u00a0"}
+                        </span>
                     </span>
                 </span>
             </div>

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import threading
 from typing import Literal
 
-_lock = threading.Lock()
-_query_total = 0
-_mutation_total = 0
+import flask
 
 
 def classify_graphql_operation(query: str) -> Literal["query", "mutation"]:
@@ -19,15 +16,11 @@ def classify_graphql_operation(query: str) -> Literal["query", "mutation"]:
     return "query"
 
 
-def record_graphql(kind: Literal["query", "mutation"]) -> None:
-    global _query_total, _mutation_total
-    with _lock:
-        if kind == "mutation":
-            _mutation_total += 1
-        else:
-            _query_total += 1
-
-
-def get_totals() -> tuple[int, int]:
-    with _lock:
-        return _query_total, _mutation_total
+def increment_request_graphql(kind: Literal["query", "mutation"]) -> None:
+    """Increment GraphQL counters on ``flask.g`` for the current request only."""
+    if not flask.has_request_context():
+        return
+    if kind == "mutation":
+        flask.g.graphql_mutations = getattr(flask.g, "graphql_mutations", 0) + 1
+    else:
+        flask.g.graphql_queries = getattr(flask.g, "graphql_queries", 0) + 1

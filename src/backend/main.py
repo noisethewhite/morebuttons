@@ -8,7 +8,6 @@ from backend.pysrc.web import Web
 from backend.pysrc.security import Security
 from backend.pysrc.database import Database
 from backend.pysrc.environment import Environment
-from backend.pysrc.graphql_counters import get_totals
 from backend.pysrc.routes import Routes
 from backend.pysrc.shipping_rates import (
     adjust_rates_by_name_percent,
@@ -40,6 +39,12 @@ CONTENT_SECURITY_POLICY = " ".join([
 
 
 @application.before_request
+def init_graphql_request_g() -> None:
+    flask.g.graphql_queries = 0
+    flask.g.graphql_mutations = 0
+
+
+@application.before_request
 def protect_api() -> None:
     if flask.request.path.startswith(Routes.API):
         Server.session_token = Security.get_session_token()
@@ -50,6 +55,15 @@ def set_csp(resp: Response) -> Response:
     resp.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
     resp.headers["X-Content-Type-Options"]  = "nosniff"
     _ = resp.headers.pop("X-Frame-Options", None)
+    return resp
+
+
+@application.after_request
+def add_graphql_request_count_headers(resp: Response) -> Response:
+    q = int(getattr(flask.g, "graphql_queries", 0))
+    m = int(getattr(flask.g, "graphql_mutations", 0))
+    resp.headers["X-GraphQL-Queries-Request"] = str(q)
+    resp.headers["X-GraphQL-Mutations-Request"] = str(m)
     return resp
 
 @application.errorhandler(Exception)
@@ -197,15 +211,6 @@ def shipping_rates_adjust():
         })
     except RuntimeError as e:
         return flask.jsonify({ "error": str(e) }), 502
-
-
-@application.route(Routes.GRAPHQL_STATS, methods=["GET"])
-def graphql_stats_route():
-    token = Database.AccessTokens.get_token(Server.shop_domain)
-    if not token:
-        return flask.jsonify({ "error": "Not installed" }), 401
-    q, m = get_totals()
-    return flask.jsonify({ "queries": q, "mutations": m })
 
 
 @application.route("/")

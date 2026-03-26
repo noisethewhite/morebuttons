@@ -47,6 +47,29 @@
     min-width: 1.5rem;
 }
 
+@keyframes graphql-stats-bump {
+    0% {
+        transform: scale(1);
+    }
+    35% {
+        transform: scale(1.07);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.graphql-stats__bump-target {
+    display: inline-block;
+    animation: graphql-stats-bump 0.28s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .graphql-stats__bump-target {
+        animation: none;
+    }
+}
+
 .graphql-stats__delta {
     box-sizing: border-box;
     display: inline-flex;
