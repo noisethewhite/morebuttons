@@ -1,5 +1,5 @@
 {
-  "python.languageServer": "Pylance",
-  "python.analysis.typeCheckingMode": "strict",
-  "python.analysis.diagnosticMode": "workspace"
+  "git.autofetch": true,
+  "python.languageServer": "None",
+  "git.confirmSync": false
 }

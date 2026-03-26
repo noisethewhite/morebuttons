@@ -1,9 +1,17 @@
 import sqlalchemy as sqla
 import sqlalchemy.dialects.postgresql as psql
-from typing import Any
+from typing import TypeVar, Protocol, override, overload
 import enum
 import heresy
 from .environment import Environment
+
+
+_T = TypeVar("_T")
+
+
+class Stringable(Protocol):
+    @override
+    def __str__(self) -> str: ...
 
 
 def _normalize_database_url(url: str) -> str:
@@ -29,17 +37,35 @@ class Database(object):
         return self._engine
 
     @heresy.singletonmethod
-    def execute(self, statement: sqla.Executable, commit: bool = True) -> sqla.CursorResult[Any]:
+    @overload
+    def execute(self, _statement: sqla.Executable, _expected_type: None) -> None: ...
+
+    @heresy.singletonmethod
+    @overload
+    def execute(self, _statement: sqla.Executable, _expected_type: type[_T]) -> _T: ...
+
+    @heresy.singletonmethod
+    def execute(
+        self,
+        _statement: sqla.Executable,
+        _expected_type: type[_T] | None = None
+    ) -> _T | None:
+        commit = _expected_type is None
         with self._engine.connect() as conn:
-            result = conn.execute(statement)
+            result: sqla.CursorResult[_T] = conn.execute(_statement)
             if commit:
                 conn.commit()
-            return result
+            if _expected_type is not None:
+                value= result.scalar_one_or_none()
+                if value is not None and not isinstance(value, _expected_type):
+                    raise RuntimeError(f"Expected {_expected_type}, got {type(value)}.")  # pyright: ignore[reportAny]
+                return value
+            return None
 
     @heresy.singleton
     class AccessTokens(object):
-        TABLE_NAME = "shop_tokens"
-        SCHEMA     = "00_secrets"
+        TABLE_NAME: str = "shop_tokens"
+        SCHEMA    : str = "00_secrets"
 
         class Columns(enum.StrEnum):
             DOMAIN = "shop_domain"
@@ -78,10 +104,8 @@ class Database(object):
             statement = sqla \
                 .select(self._table.c[self.Columns.TOKEN]) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
-            access_token = Database \
-                .execute(statement, commit=False) \
-                .scalar_one_or_none()
-            if access_token is not None and not isinstance(access_token, str):
+            access_token = Database.execute(statement, str)
+            if access_token is None:
                 raise RuntimeError("Tried to get_access_token; it is not a string.")
             return access_token
 
@@ -90,12 +114,12 @@ class Database(object):
             statement = sqla \
                 .delete(self._table) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
-            Database.execute(statement)
+            _ = Database.execute(statement)
 
     @heresy.singleton
     class Webhooks(object):
-        TABLE_NAME = "shop_webhooks"
-        SCHEMA     = "00_secrets"
+        TABLE_NAME: str = "shop_webhooks"
+        SCHEMA    : str = "00_secrets"
 
         class Columns(enum.StrEnum):
             DOMAIN   = "shop_domain"
@@ -127,18 +151,16 @@ class Database(object):
                     index_elements=[self.Columns.DOMAIN],
                     set_={ self.Columns.WEBHOOKS: webhooks }
                 )
-            Database.execute(statement)
+            _ = Database.execute(statement)
 
         @heresy.singletonmethod
         def get_webhooks(self, shop_domain: str) -> list[str] | None:
             statement = sqla \
                 .select(self._table.c[self.Columns.WEBHOOKS]) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
-            row = Database.execute(statement, commit=False).scalar_one_or_none()
+            row = Database.execute(statement, list[str])
             if row is None:
                 return None
-            if not isinstance(row, list):
-                raise RuntimeError("Webhooks column is not a list.")
             return [str(x) for x in row]
 
         @heresy.singletonmethod
@@ -153,4 +175,4 @@ class Database(object):
             statement = sqla \
                 .delete(self._table) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
-            Database.execute(statement)
+            _ = Database.execute(statement)

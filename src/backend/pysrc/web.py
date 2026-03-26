@@ -1,7 +1,6 @@
 import requests
-from typing import cast
 from .environment import Environment
-from typing import TypeAlias, Union
+from typing import TypeAlias, cast
 from .database import Database
 from .security import Security
 from .routes import Routes
@@ -9,14 +8,12 @@ from .routes import Routes
 
 class Json(object):
     String: TypeAlias = str
-    Number: TypeAlias = Union[int, float]
+    Number: TypeAlias = int | float
     Boolean: TypeAlias = bool
     Null: TypeAlias = None
     Array: TypeAlias = list["Json.Value"]
     Object: TypeAlias = dict[String, "Json.Value"]
-    Value: TypeAlias = Union[
-        String, Number, Boolean, Null, Array, Object
-    ]
+    Value: TypeAlias = String | Number | Boolean | Null | Array | Object
 
 
 _WEBHOOK_SUBSCRIPTION_CREATE = """
@@ -41,7 +38,7 @@ class Web(object):
         shop_domain: str,
         access_token: str,
         query: str,
-        variables: Json.Object = {}
+        variables: Json.Object | None = None
     ) -> Json.Value:
         resp = requests.post(
             url=f"https://{shop_domain}/admin/api/{Environment.shopify_api_version}/graphql.json",
@@ -51,7 +48,9 @@ class Web(object):
             },
             json={
                 "query": query,
-                "variables": { k: v for k, v in variables.items() if v is not None }
+                "variables": {
+                    k: v for k, v in variables.items() if v is not None
+                } if variables is not None else {}
             },
             timeout=20
         )
@@ -88,8 +87,12 @@ class Web(object):
                 f"webhookSubscriptionCreate userErrors: {user_errors!r}"
             )
         sub = wsc.get("webhookSubscription")
-        if isinstance(sub, dict) and isinstance(sub.get("id"), str):
-            Database.Webhooks.add_webhook_id(shop_domain, sub["id"])
+        if not isinstance(sub, dict):
+            raise RuntimeError("GraphQL response missing webhookSubscription.")
+        sub_id = sub.get("id")
+        if not isinstance(sub_id, str):
+            raise RuntimeError("Webhook subscription ID is not a string.")
+        Database.Webhooks.add_webhook_id(shop_domain, sub_id)
 
     @staticmethod
     def get_access_token(shop_domain: str, session_token: str) -> str:
@@ -113,7 +116,7 @@ class Web(object):
             }
         )
         resp.raise_for_status()
-        data: Json.Value = resp.json()
+        data: Json.Value = cast(Json.Value, resp.json())
         if not isinstance(data, dict) or "access_token" not in data:
             raise RuntimeError(
                 "Access token was not included in the response from Shopify."

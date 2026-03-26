@@ -39,7 +39,7 @@ def protect_api() -> None:
 def set_csp(resp: Response) -> Response:
     resp.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
     resp.headers["X-Content-Type-Options"]  = "nosniff"
-    resp.headers.pop("X-Frame-Options", None)
+    _ = resp.headers.pop("X-Frame-Options", None)
     return resp
 
 @application.errorhandler(Exception)
@@ -76,4 +76,7 @@ def oauth():
 
 @application.route("/")
 def index() -> str:
-    return flask.render_template("index.html", api_key=Environment.shopify_api_key)
+    return flask.render_template(
+        "index.html",
+        api_key=Environment.shopify_api_key
+    )

@@ -1,11 +1,11 @@
-from typing import Optional, Self
+from typing import Self
 import os
 import enum
 from .namedstring import NamedString
 
 
 class EnvEnum(enum.StrEnum):
-    def __get__(self, instance: Optional[Self], owner: type[Self]) -> NamedString:
+    def __get__(self, instance: Self | None, owner: type[Self]) -> NamedString:
         value = NamedString(self.value, os.environ.get(self) or "")
         if not value:
             missing = [

@@ -4,10 +4,7 @@ import hmac
 import hashlib
 import base64
 import urllib.parse
-import requests
-from typing import cast
 from .environment import Environment
-from .database import Database
 
 
 class Security(object):
@@ -19,12 +16,18 @@ class Security(object):
 
     @staticmethod
     def get_shop_domain(session_token: str) -> str:
-        return jwt.decode( # pyright: ignore[reportUnknownMemberType]
+        raw = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
             session_token,
             Environment.shopify_secret,
             algorithms=["HS256"],
             audience=Environment.shopify_api_key
-        )["dest"].replace("https://", "").replace("http://", "")
+        )
+        if "dest" not in raw:
+            raise RuntimeError("Session token is not a valid JWT.")
+        dest = raw["dest"]  # pyright: ignore[reportAny]
+        if not isinstance(dest, str):
+            raise RuntimeError("Session token destination is not a string.")
+        return dest.replace("https://", "").replace("http://", "")
 
     @staticmethod
     def verify_oauth_hmac() -> bool:

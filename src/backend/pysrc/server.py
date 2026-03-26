@@ -31,8 +31,8 @@ class Server(object):
         return self._app
 
     @heresy.singletonproperty
-    def session_token(self) -> str: # type: ignore
-        if isinstance(flask.g.session_token, str):
+    def session_token(self) -> str:                 # pyright: ignore[reportRedeclaration]
+        if isinstance(flask.g.session_token, str):  # pyright: ignore[reportAny]
             return flask.g.session_token
         return ""
 
@@ -41,8 +41,8 @@ class Server(object):
         flask.g.session_token = token
 
     @heresy.singletonproperty
-    def shop_domain(self) -> str: # type: ignore
-        if isinstance(flask.g.shop_domain, str):
+    def shop_domain(self) -> str:                   # pyright: ignore[reportRedeclaration]
+        if isinstance(flask.g.shop_domain, str):    # pyright: ignore[reportAny]
             return flask.g.shop_domain
         return ""
 
