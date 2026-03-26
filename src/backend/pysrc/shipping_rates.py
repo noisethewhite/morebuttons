@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, cast
+from typing import cast
 
 from .fileloader import FileLoader
 from .web import Json, Web
@@ -16,14 +16,16 @@ def _extract_errors(gql: Json.Value) -> list[str] | None:
         return None
     out: list[str] = []
     for e in errs:
-        if isinstance(e, dict) and isinstance(e.get("message"), str):
-            out.append(e["message"])
+        if isinstance(e, dict):
+            msg = e.get("message")
+            if isinstance(msg, str):
+                out.append(msg)
         else:
             out.append(repr(e))
     return out
 
 
-def _data(gql: Json.Value) -> dict[str, Any] | None:
+def _data(gql: Json.Value) -> Json.Object | None:
     if not isinstance(gql, dict):
         return None
     d = gql.get("data")
@@ -36,9 +38,9 @@ def _scale_money(amount: str, factor: Decimal) -> str:
 
 
 def _method_update_input(
-    method: dict[str, Any],
+    method: Json.Object,
     factor: Decimal,
-) -> dict[str, Any] | None:
+) -> Json.Object | None:
     mid = method.get("id")
     if not isinstance(mid, str):
         return None
@@ -87,16 +89,16 @@ def _method_update_input(
     return None
 
 
-def _chunks(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
+def _chunks(items: list[Json.Object], size: int) -> list[list[Json.Object]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 def collect_methods_and_warnings(
     shop_domain: str,
     access_token: str,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[Json.Object], list[str]]:
     warnings: list[str] = []
-    rows: list[dict[str, Any]] = []
+    rows: list[Json.Object] = []
 
     q_profiles = FileLoader.load("delivery_profiles_page.gql")
     q_zones = FileLoader.load("delivery_profile_group_zones.gql")
@@ -173,7 +175,7 @@ def _append_zone_methods(
     profile_id: str,
     profile_name: str,
     location_group_id: str,
-    rows: list[dict[str, Any]],
+    rows: list[Json.Object],
     warnings: list[str],
 ) -> None:
     after_zones: str | None = None
@@ -230,7 +232,7 @@ def _append_zone_methods(
             mpi = md.get("pageInfo")
             if isinstance(mpi, dict) and mpi.get("hasNextPage"):
                 warnings.append(
-                    f"More than 250 method definitions in a zone; "
+                    f"More than 250 method definitions in a zone; " + \
                     f"only the first page was loaded (zone {zid})."
                 )
             medges = md.get("edges")
@@ -262,7 +264,7 @@ def _append_zone_methods(
         after_zones = ec
 
 
-def unique_rate_names(rows: list[dict[str, Any]]) -> list[str]:
+def unique_rate_names(rows: list[Json.Object]) -> list[str]:
     names: set[str] = set()
     for row in rows:
         m = row.get("method")
@@ -284,7 +286,7 @@ _OPERATOR_SYMBOL: dict[str, str] = {
 }
 
 
-def _format_condition(cond: dict[str, Any]) -> str | None:
+def _format_condition(cond: Json.Object) -> str | None:
     op = cond.get("operator")
     crit = cond.get("conditionCriteria")
     if not isinstance(op, str) or not isinstance(crit, dict):
@@ -315,7 +317,7 @@ def _format_condition(cond: dict[str, Any]) -> str | None:
     return None
 
 
-def _format_boundary(method: dict[str, Any]) -> str:
+def _format_boundary(method: Json.Object) -> str:
     mcs = method.get("methodConditions")
     if not isinstance(mcs, list) or len(mcs) == 0:
         return "No tier limits"
@@ -331,7 +333,7 @@ def _format_boundary(method: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def _price_pair(method: dict[str, Any], factor: Decimal) -> tuple[str, str] | None:
+def _price_pair(method: Json.Object, factor: Decimal) -> tuple[str, str] | None:
     rp = method.get("rateProvider")
     if not isinstance(rp, dict):
         return None
@@ -364,7 +366,7 @@ def preview_rate_changes(
     access_token: str,
     rate_name: str,
     percent: float,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[Json.Object], list[str]]:
     """
     Returns (profiles, warnings) where each profile has
     id, name, zones: [{ id, name, rows: [{ id, boundary, current, new }] }].
@@ -372,15 +374,15 @@ def preview_rate_changes(
     rows, warnings = collect_methods_and_warnings(shop_domain, access_token)
     factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
 
-    acc: dict[str, dict[str, Any]] = {}
+    acc: dict[str, Json.Object] = {}
 
     for row in rows:
         m = row.get("method")
         if not isinstance(m, dict) or m.get("name") != rate_name:
             continue
-        if _method_update_input(cast(dict[str, Any], m), factor) is None:
+        if _method_update_input(m, factor) is None:
             continue
-        pair = _price_pair(cast(dict[str, Any], m), factor)
+        pair = _price_pair(m, factor)
         if pair is None:
             continue
         cur_s, new_s = pair
@@ -397,7 +399,7 @@ def preview_rate_changes(
         mid = m.get("id")
         if not isinstance(mid, str):
             continue
-        boundary = _format_boundary(cast(dict[str, Any], m))
+        boundary = _format_boundary(m)
 
         if pid not in acc:
             acc[pid] = {"name": pname, "zones": {}}
@@ -421,7 +423,7 @@ def preview_rate_changes(
             }
         )
 
-    out: list[dict[str, Any]] = []
+    out: list[Json.Object] = []
     for pid in sorted(
         acc.keys(),
         key=lambda i: (str(acc[i].get("name", "")).lower(), i),
@@ -433,11 +435,11 @@ def preview_rate_changes(
         zmap = entry.get("zones")
         if not isinstance(zmap, dict):
             continue
-        zones_out: list[dict[str, Any]] = []
+        zones_out: list[Json.Object] = []
         for zid in sorted(
             zmap.keys(),
             key=lambda z: (
-                str(cast(dict[str, Any], zmap[z]).get("name", "")).lower(),
+                str(cast(Json.Object, cast(Json.Object, zmap)[z]).get("name", "")).lower(),
                 z,
             ),
         ):
@@ -451,7 +453,7 @@ def preview_rate_changes(
             if not isinstance(rows_list, list):
                 continue
             rows_sorted = sorted(
-                rows_list,
+                cast(list[Json.Object], rows_list),
                 key=lambda r: (
                     str(r.get("boundary", "")),
                     str(r.get("id", "")),
@@ -464,7 +466,13 @@ def preview_rate_changes(
                     "rows": rows_sorted,
                 }
             )
-        out.append({"id": pid, "name": pname, "zones": zones_out})
+        out.append(
+            {
+                "id": pid,
+                "name": pname,
+                "zones": zones_out,
+            }
+        )
 
     return out, warnings
 
@@ -481,7 +489,7 @@ def adjust_rates_by_name_percent(
     rows, warnings = collect_methods_and_warnings(shop_domain, access_token)
     factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
 
-    by_profile: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = defaultdict(
+    by_profile: dict[str, dict[str, dict[str, list[Json.Object]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(list))
     )
 
@@ -492,15 +500,17 @@ def adjust_rates_by_name_percent(
             continue
         if m.get("name") != rate_name:
             continue
-        inp = _method_update_input(cast(dict[str, Any], m), factor)
+        inp = _method_update_input(m, factor)
         if inp is None:
             warnings.append(
                 f"Skipped a rate named {rate_name!r} (unsupported rate type or missing price)."
             )
             continue
-        pid = row["profileId"]
-        lg = row["locationGroupId"]
-        zid = row["zoneId"]
+        pid = row.get("profileId")
+        lg = row.get("locationGroupId")
+        zid = row.get("zoneId")
+        if not isinstance(pid, str) or not isinstance(lg, str) or not isinstance(zid, str):
+            continue
         by_profile[pid][lg][zid].append(inp)
         updated += 1
 
@@ -512,24 +522,33 @@ def adjust_rates_by_name_percent(
 
     for profile_id, by_lg in by_profile.items():
         for lg_id, by_zone in by_lg.items():
-            zones_payload: list[dict[str, Any]] = []
+            zones_payload: list[Json.Object] = []
             for zone_id, methods in by_zone.items():
                 zones_payload.append(
-                    {"id": zone_id, "methodDefinitionsToUpdate": methods}
+                    {
+                        "id": zone_id,
+                        "methodDefinitionsToUpdate": cast(list[Json.Value], methods),
+                    }
                 )
             for chunk in _chunks(zones_payload, 5):
                 gql = Web.graphql_send(
                     shop_domain,
                     access_token,
                     mut,
-                    {
-                        "id": profile_id,
-                        "profile": {
-                            "locationGroupsToUpdate": [
-                                {"id": lg_id, "zonesToUpdate": chunk}
-                            ]
+                    cast(
+                        Json.Object,
+                        {
+                            "id": profile_id,
+                            "profile": {
+                                "locationGroupsToUpdate": [
+                                    {
+                                        "id": lg_id,
+                                        "zonesToUpdate": cast(list[Json.Value], chunk),
+                                    }
+                                ]
+                            },
                         },
-                    },
+                    ),
                 )
                 if errs := _extract_errors(gql):
                     user_msgs.extend(errs)
@@ -544,7 +563,10 @@ def adjust_rates_by_name_percent(
                 ues = dpu.get("userErrors")
                 if isinstance(ues, list):
                     for ue in ues:
-                        if isinstance(ue, dict) and isinstance(ue.get("message"), str):
-                            user_msgs.append(ue["message"])
+                        if not isinstance(ue, dict):
+                            continue
+                        msg = ue.get("message")
+                        if isinstance(msg, str):
+                            user_msgs.append(msg)
 
     return updated, warnings, user_msgs

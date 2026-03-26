@@ -1,4 +1,6 @@
 import sys
+from typing import cast
+from backend.pysrc.web import Json
 import flask
 from werkzeug.wrappers.response import Response
 from backend.pysrc.server import Server
@@ -100,7 +102,7 @@ def shipping_rates_preview():
         return flask.jsonify({ "error": "Not installed" }), 401
     name = flask.request.args.get("name", "")
     percent_raw = flask.request.args.get("percent", "")
-    if not isinstance(name, str) or not name.strip():
+    if not name.strip():
         return flask.jsonify({ "error": "Missing or invalid name" }), 400
     try:
         percent = float(percent_raw.strip())
@@ -123,7 +125,7 @@ def shipping_rates_adjust():
     token = Database.AccessTokens.get_token(Server.shop_domain)
     if not token:
         return flask.jsonify({ "error": "Not installed" }), 401
-    raw_body = flask.request.get_json(silent=True)
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
     body = raw_body if isinstance(raw_body, dict) else {}
     name = body.get("name")
     percent_raw = body.get("percent")

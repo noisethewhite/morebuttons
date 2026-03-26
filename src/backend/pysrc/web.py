@@ -14,7 +14,7 @@ class Json(object):
     Null: TypeAlias = None
     Array: TypeAlias = list["Json.Value"]
     Object: TypeAlias = dict[String, "Json.Value"]
-    Value: TypeAlias = String | Number | Boolean | Null | Array | Object
+    Value: TypeAlias = String | Number | Boolean | Null | Array | Object | list[Object]
 
 
 class Web(object):
