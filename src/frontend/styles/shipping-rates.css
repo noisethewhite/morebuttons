@@ -62,6 +62,10 @@
     min-width: 10rem;
 }
 
+.shipping-rates__field--filter {
+    min-width: 9rem;
+}
+
 .shipping-rates__field--percent {
     min-width: 6rem;
 }

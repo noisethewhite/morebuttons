@@ -11,6 +11,7 @@ from backend.pysrc.environment import Environment
 from backend.pysrc.routes import Routes
 from backend.pysrc.shipping_rates import (
     adjust_rates_by_name_percent,
+    build_delivery_profile_filters,
     collect_methods_and_warnings,
     preview_rate_changes,
     unique_rate_names,
@@ -90,7 +91,13 @@ def shipping_rate_names():
     try:
         rows, warnings = collect_methods_and_warnings(Server.shop_domain, token)
         names = unique_rate_names(rows)
-        return flask.jsonify({ "names": names, "warnings": warnings })
+        profiles, zones_by_profile = build_delivery_profile_filters(rows)
+        return flask.jsonify({
+            "names": names,
+            "profiles": profiles,
+            "zonesByProfile": zones_by_profile,
+            "warnings": warnings,
+        })
     except RuntimeError as e:
         return flask.jsonify({ "error": str(e) }), 502
 
@@ -108,12 +115,16 @@ def shipping_rates_preview():
         percent = float(percent_raw.strip())
     except (TypeError, ValueError):
         return flask.jsonify({ "error": "Invalid percent" }), 400
+    profile_id = flask.request.args.get("profileId", "").strip() or None
+    zone_id = flask.request.args.get("zoneId", "").strip() or None
     try:
         profiles, warnings = preview_rate_changes(
             Server.shop_domain,
             token,
             name.strip(),
             percent,
+            profile_id,
+            zone_id,
         )
         return flask.jsonify({ "profiles": profiles, "warnings": warnings })
     except RuntimeError as e:
@@ -142,12 +153,26 @@ def shipping_rates_adjust():
             return flask.jsonify({ "error": "Invalid percent" }), 400
     else:
         return flask.jsonify({ "error": "Invalid percent" }), 400
+    profile_id_raw = body.get("profileId")
+    zone_id_raw = body.get("zoneId")
+    profile_id = (
+        profile_id_raw.strip()
+        if isinstance(profile_id_raw, str) and profile_id_raw.strip()
+        else None
+    )
+    zone_id = (
+        zone_id_raw.strip()
+        if isinstance(zone_id_raw, str) and zone_id_raw.strip()
+        else None
+    )
     try:
         updated, warnings, user_errors = adjust_rates_by_name_percent(
             Server.shop_domain,
             token,
             name.strip(),
             percent,
+            profile_id,
+            zone_id,
         )
         return flask.jsonify({
             "updated": updated,

@@ -275,6 +275,50 @@ def unique_rate_names(rows: list[Json.Object]) -> list[str]:
     return sorted(names)
 
 
+def build_delivery_profile_filters(
+    rows: list[Json.Object],
+) -> tuple[list[Json.Object], Json.Object]:
+    """Unique delivery profiles and zones per profile (for filter dropdowns)."""
+    profiles_map: dict[str, str] = {}
+    zones_by_profile: dict[str, dict[str, str]] = defaultdict(dict)
+    for row in rows:
+        pid = row.get("profileId")
+        pname = row.get("profileName")
+        zid = row.get("zoneId")
+        zname = row.get("zoneName")
+        if isinstance(pid, str) and isinstance(pname, str):
+            profiles_map[pid] = pname
+        if isinstance(pid, str) and isinstance(zid, str) and isinstance(zname, str):
+            zones_by_profile[pid][zid] = zname
+    profiles = [
+        {"id": k, "name": v}
+        for k, v in sorted(profiles_map.items(), key=lambda x: (x[1].lower(), x[0]))
+    ]
+    zones_out: Json.Object = {}
+    for pid in sorted(zones_by_profile.keys()):
+        zd = zones_by_profile[pid]
+        zones_list = [
+            {"id": zid, "name": zd[zid]}
+            for zid in sorted(zd.keys(), key=lambda z: (zd[z].lower(), z))
+        ]
+        zones_out[pid] = cast(list[Json.Value], zones_list)
+    return cast(list[Json.Object], profiles), zones_out
+
+
+def _row_matches_profile_zone(
+    row: Json.Object,
+    profile_id: str | None,
+    zone_id: str | None,
+) -> bool:
+    if profile_id is not None:
+        if row.get("profileId") != profile_id:
+            return False
+    if zone_id is not None:
+        if row.get("zoneId") != zone_id:
+            return False
+    return True
+
+
 _OPERATOR_SYMBOL: dict[str, str] = {
     "LESS_THAN_OR_EQUAL_TO": "≤",
     "GREATER_THAN_OR_EQUAL_TO": "≥",
@@ -365,6 +409,8 @@ def preview_rate_changes(
     access_token: str,
     rate_name: str,
     percent: float,
+    profile_id: str | None = None,
+    zone_id: str | None = None,
 ) -> tuple[list[Json.Object], list[str]]:
     """
     Returns (profiles, warnings) where each profile has
@@ -376,6 +422,8 @@ def preview_rate_changes(
     acc: dict[str, Json.Object] = {}
 
     for row in rows:
+        if not _row_matches_profile_zone(row, profile_id, zone_id):
+            continue
         m = row.get("method")
         if not isinstance(m, dict) or m.get("name") != rate_name:
             continue
@@ -481,6 +529,8 @@ def adjust_rates_by_name_percent(
     access_token: str,
     rate_name: str,
     percent: float,
+    profile_id: str | None = None,
+    zone_id: str | None = None,
 ) -> tuple[int, list[str], list[str]]:
     """
     Returns (updated_method_count, warnings, user_error_messages).
@@ -494,6 +544,8 @@ def adjust_rates_by_name_percent(
 
     updated = 0
     for row in rows:
+        if not _row_matches_profile_zone(row, profile_id, zone_id):
+            continue
         m = row.get("method")
         if not isinstance(m, dict):
             continue

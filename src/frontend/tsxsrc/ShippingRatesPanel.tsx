@@ -1,9 +1,21 @@
-import { ReactNode, useEffect, useState } from "react"
+import { ReactNode, useEffect, useMemo, useState } from "react"
 import type { SubmitEventHandler } from "react"
 import AppBridge from "../tssrc/app_bridge"
 
+interface FilterProfile {
+    id: string
+    name: string
+}
+
+interface FilterZone {
+    id: string
+    name: string
+}
+
 interface NamesResponse {
     names: string[]
+    profiles?: FilterProfile[]
+    zonesByProfile?: Record<string, FilterZone[]>
     warnings?: string[]
     error?: string
 }
@@ -64,9 +76,17 @@ function priceChangeKind(current: string, next: string): "up" | "down" | "same" 
     return "same"
 }
 
+const ALL_VALUE = ""
+
 export default function ShippingRatesPanel(): ReactNode {
     const [names, setNames] = useState<string[]>([])
+    const [profiles, setProfiles] = useState<FilterProfile[]>([])
+    const [zonesByProfile, setZonesByProfile] = useState<Record<string, FilterZone[]>>(
+        {}
+    )
     const [selected, setSelected] = useState("")
+    const [profileId, setProfileId] = useState(ALL_VALUE)
+    const [zoneId, setZoneId] = useState(ALL_VALUE)
     const [percent, setPercent] = useState("")
     const [loadingNames, setLoadingNames] = useState(true)
     const [submitting, setSubmitting] = useState(false)
@@ -100,6 +120,10 @@ export default function ShippingRatesPanel(): ReactNode {
                 }
                 setNames(data.names ?? [])
                 setSelected((data.names ?? [])[0] ?? "")
+                setProfiles(data.profiles ?? [])
+                setZonesByProfile(data.zonesByProfile ?? {})
+                setProfileId(ALL_VALUE)
+                setZoneId(ALL_VALUE)
                 if (data.warnings?.length) {
                     setStatus({
                         kind: "ok",
@@ -149,6 +173,12 @@ export default function ShippingRatesPanel(): ReactNode {
                         name: selected,
                         percent: p,
                     })
+                    if (profileId) {
+                        q.set("profileId", profileId)
+                    }
+                    if (zoneId) {
+                        q.set("zoneId", zoneId)
+                    }
                     const res = await AppBridge.fetchWithToken(
                         `/api/shipping-rates/preview?${q.toString()}`
                     )
@@ -181,7 +211,29 @@ export default function ShippingRatesPanel(): ReactNode {
             cancelled = true
             window.clearTimeout(handle)
         }
-    }, [selected, percent, pendingConfirmation])
+    }, [selected, percent, profileId, zoneId, pendingConfirmation])
+
+    const zoneOptions: FilterZone[] = useMemo(() => {
+        if (profileId) {
+            return zonesByProfile[profileId] ?? []
+        }
+        const seen = new Set<string>()
+        const out: FilterZone[] = []
+        for (const p of profiles) {
+            for (const z of zonesByProfile[p.id] ?? []) {
+                if (!seen.has(z.id)) {
+                    seen.add(z.id)
+                    out.push(z)
+                }
+            }
+        }
+        return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+    }, [profileId, profiles, zonesByProfile])
+
+    function onProfileChange(value: string): void {
+        setProfileId(value)
+        setZoneId(ALL_VALUE)
+    }
 
     const onSubmitSet: SubmitEventHandler<HTMLFormElement> = (e) => {
         e.preventDefault()
@@ -223,6 +275,8 @@ export default function ShippingRatesPanel(): ReactNode {
                 body: JSON.stringify({
                     name: selected,
                     percent: Number(p),
+                    ...(profileId ? { profileId } : {}),
+                    ...(zoneId ? { zoneId } : {}),
                 }),
             })
             const data = (await res.json()) as AdjustResponse
@@ -233,7 +287,7 @@ export default function ShippingRatesPanel(): ReactNode {
                 })
                 return
             }
-            const parts: string[] = [`Updated ${data.updated} rate(s).`]
+            const parts: string[] = [`Updated ${data.updated} rate${data.updated === 1 ? "" : "s"}.`]
             if (data.userErrors?.length) {
                 parts.push(`Shopify: ${data.userErrors.join("; ")}`)
             }
@@ -249,6 +303,12 @@ export default function ShippingRatesPanel(): ReactNode {
             })
             setPendingConfirmation(false)
             const q = new URLSearchParams({ name: selected, percent: p })
+            if (profileId) {
+                q.set("profileId", profileId)
+            }
+            if (zoneId) {
+                q.set("zoneId", zoneId)
+            }
             const prevRes = await AppBridge.fetchWithToken(
                 `/api/shipping-rates/preview?${q.toString()}`
             )
@@ -310,7 +370,8 @@ export default function ShippingRatesPanel(): ReactNode {
                         </p>
                     ) : (
                         <p className="shipping-rates__list-hint">
-                            Applies to every zone in every profile where the rate name matches.
+                            Narrow by delivery profile and zone, or leave both on All. Applies
+                            where the rate name matches.
                         </p>
                     )}
                     <form onSubmit={onSubmitSet}>
@@ -326,6 +387,38 @@ export default function ShippingRatesPanel(): ReactNode {
                                     {names.map((n) => (
                                         <option key={n} value={n}>
                                             {n}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="shipping-rates__field shipping-rates__field--filter">
+                                <label htmlFor="shipping-profile">Delivery profile</label>
+                                <select
+                                    id="shipping-profile"
+                                    value={profileId}
+                                    onChange={(e) => onProfileChange(e.target.value)}
+                                    disabled={busy || controlsLocked}
+                                >
+                                    <option value={ALL_VALUE}>All</option>
+                                    {profiles.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name || "Unnamed profile"}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="shipping-rates__field shipping-rates__field--filter">
+                                <label htmlFor="shipping-zone">Delivery zone</label>
+                                <select
+                                    id="shipping-zone"
+                                    value={zoneId}
+                                    onChange={(e) => setZoneId(e.target.value)}
+                                    disabled={busy || controlsLocked}
+                                >
+                                    <option value={ALL_VALUE}>All</option>
+                                    {zoneOptions.map((z) => (
+                                        <option key={z.id} value={z.id}>
+                                            {z.name || "Unnamed zone"}
                                         </option>
                                     ))}
                                 </select>
