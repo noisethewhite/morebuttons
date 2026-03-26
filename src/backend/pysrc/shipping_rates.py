@@ -389,6 +389,229 @@ _OPERATOR_SYMBOL: dict[str, str] = {
     "NOT_EQUAL_TO": "≠",
 }
 
+_ZERO_DECIMAL_CURRENCIES: frozenset[str] = frozenset(
+    "BIF CLP DJF GNF HUF ISK JPY KMF KRW PYG RWF VND VUV XAF XOF XPF".split()
+)
+
+_CURRENCY_PREFIX: frozenset[str] = frozenset(
+    {"USD", "CAD", "AUD", "MXN", "SGD", "HKD", "NZD", "TWD", "PHP", "MYR", "THB"}
+)
+
+_CURRENCY_SYMBOL: dict[str, str] = {
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "JPY": "¥",
+    "CAD": "C$",
+    "AUD": "A$",
+    "NZD": "NZ$",
+    "CHF": "CHF",
+    "SEK": "kr",
+    "NOK": "kr",
+    "DKK": "kr",
+    "PLN": "zł",
+    "CZK": "Kč",
+    "HUF": "Ft",
+    "RON": "lei",
+    "BGN": "лв",
+    "BRL": "R$",
+    "INR": "₹",
+    "KRW": "₩",
+    "CNY": "¥",
+    "ZAR": "R",
+    "AED": "د.إ",
+    "SAR": "﷼",
+    "ILS": "₪",
+    "TRY": "₺",
+}
+
+
+def _currency_symbol(code: str) -> str:
+    return _CURRENCY_SYMBOL.get(code, code)
+
+
+def _format_money_display(amount: str, currency_code: str) -> str:
+    d = Decimal(amount)
+    code = currency_code.upper()
+    if code in _ZERO_DECIMAL_CURRENCIES:
+        q = d.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        fmt = str(int(q))
+    else:
+        q = d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        fmt = f"{q:.2f}"
+    sym = _currency_symbol(code)
+    if code in _CURRENCY_PREFIX:
+        return f"{sym}{fmt}"
+    return f"{fmt} {sym}"
+
+
+def _fmt_weight_num(v: float) -> str:
+    if abs(v - round(v)) < 1e-9:
+        return str(int(round(v)))
+    s = f"{v:.6f}".rstrip("0").rstrip(".")
+    return s
+
+
+_WEIGHT_UNIT_LABEL: dict[str, str] = {
+    "KILOGRAMS": "kg",
+    "GRAMS": "g",
+    "POUNDS": "lb",
+    "OUNCES": "oz",
+}
+
+
+def _weight_unit_label(unit: str) -> str:
+    return _WEIGHT_UNIT_LABEL.get(unit, unit.lower())
+
+
+def _parse_weight_triple(cond: Json.Object) -> tuple[str, float, str] | None:
+    crit = cond.get("conditionCriteria")
+    op = cond.get("operator")
+    if not isinstance(crit, dict) or crit.get("__typename") != "Weight":
+        return None
+    if not isinstance(op, str):
+        return None
+    unit = crit.get("unit")
+    val = crit.get("value")
+    if not isinstance(unit, str):
+        return None
+    if isinstance(val, (int, float)):
+        vdisp = float(val)
+    elif isinstance(val, str):
+        try:
+            vdisp = float(val)
+        except ValueError:
+            return None
+    else:
+        return None
+    return (op, vdisp, unit)
+
+
+def _parse_money_triple(cond: Json.Object) -> tuple[str, str, str] | None:
+    crit = cond.get("conditionCriteria")
+    op = cond.get("operator")
+    if not isinstance(crit, dict) or crit.get("__typename") != "MoneyV2":
+        return None
+    if not isinstance(op, str):
+        return None
+    amt = crit.get("amount")
+    cur = crit.get("currencyCode")
+    if not isinstance(amt, str) or not isinstance(cur, str):
+        return None
+    return (op, amt, cur.upper())
+
+
+def _format_weight_segment(conds: list[Json.Object]) -> str | None:
+    parsed: list[tuple[str, float, str]] = []
+    for c in conds:
+        p = _parse_weight_triple(c)
+        if p:
+            parsed.append(p)
+    if not parsed:
+        return None
+    units = {u for _, _, u in parsed}
+    if len(units) != 1:
+        return "; ".join(
+            s
+            for c in conds
+            if (s := _format_condition(c)) is not None
+        ) or None
+    unit = next(iter(units))
+    label = _weight_unit_label(unit)
+    low_ops = frozenset({"GREATER_THAN_OR_EQUAL_TO", "GREATER_THAN"})
+    high_ops = frozenset({"LESS_THAN_OR_EQUAL_TO", "LESS_THAN"})
+    lows = [v for op, v, _ in parsed if op in low_ops]
+    highs = [v for op, v, _ in parsed if op in high_ops]
+    eqs = [v for op, v, _ in parsed if op == "EQUAL_TO"]
+
+    if len(parsed) == 1:
+        op, v, _u = parsed[0]
+        if op in low_ops:
+            return f"Weight: ≥{_fmt_weight_num(v)} {label}"
+        if op in high_ops:
+            return f"Weight: ≤{_fmt_weight_num(v)} {label}"
+        if op == "EQUAL_TO":
+            return f"Weight: {_fmt_weight_num(v)} {label}"
+
+    if lows and highs:
+        lo = max(lows)
+        hi = min(highs)
+        if lo <= hi:
+            return f"Weight: {_fmt_weight_num(lo)}–{_fmt_weight_num(hi)} {label}"
+
+    if lows and not highs:
+        return f"Weight: ≥{_fmt_weight_num(max(lows))} {label}"
+    if highs and not lows:
+        return f"Weight: ≤{_fmt_weight_num(min(highs))} {label}"
+    if eqs and len(eqs) == 1 and not lows and not highs:
+        return f"Weight: {_fmt_weight_num(eqs[0])} {label}"
+    return None
+
+
+def _format_money_range(lo_amt: str, hi_amt: str, cur: str) -> str:
+    code = cur.upper()
+    d = Decimal(lo_amt)
+    d2 = Decimal(hi_amt)
+    if code in _ZERO_DECIMAL_CURRENCIES:
+        lo_s = str(int(d.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
+        hi_s = str(int(d2.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
+    else:
+        lo_s = f"{d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+        hi_s = f"{d2.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+    sym = _currency_symbol(code)
+    if code in _CURRENCY_PREFIX:
+        return f"Order total: {sym}{lo_s}–{sym}{hi_s}"
+    return f"Order total: {lo_s}–{hi_s} {sym}"
+
+
+def _format_money_segment(conds: list[Json.Object]) -> str | None:
+    parsed: list[tuple[str, str, str]] = []
+    for c in conds:
+        p = _parse_money_triple(c)
+        if p:
+            parsed.append(p)
+    if not parsed:
+        return None
+    currencies = {c for _, _, c in parsed}
+    if len(currencies) != 1:
+        return "; ".join(
+            s
+            for c in conds
+            if (s := _format_condition(c)) is not None
+        ) or None
+    cur = next(iter(currencies))
+    low_ops = frozenset({"GREATER_THAN_OR_EQUAL_TO", "GREATER_THAN"})
+    high_ops = frozenset({"LESS_THAN_OR_EQUAL_TO", "LESS_THAN"})
+    lows = [(a, c) for op, a, c in parsed if op in low_ops]
+    highs = [(a, c) for op, a, c in parsed if op in high_ops]
+    eqs = [a for op, a, _ in parsed if op == "EQUAL_TO"]
+
+    if len(parsed) == 1:
+        op, amt, c = parsed[0]
+        sym = _OPERATOR_SYMBOL.get(op, op)
+        disp = _format_money_display(amt, c)
+        if op == "EQUAL_TO":
+            return f"Order total: {disp}"
+        return f"Order total: {sym} {disp}"
+
+    if lows and highs:
+        lo_amt = max(Decimal(a) for a, _c in lows)
+        hi_amt = min(Decimal(a) for a, _c in highs)
+        if lo_amt <= hi_amt:
+            return _format_money_range(str(lo_amt), str(hi_amt), cur)
+
+    if lows and not highs:
+        best = max(Decimal(a) for a, _c in lows)
+        disp = _format_money_display(str(best), cur)
+        return f"Order total: ≥ {disp}"
+    if highs and not lows:
+        best = min(Decimal(a) for a, _c in highs)
+        disp = _format_money_display(str(best), cur)
+        return f"Order total: ≤ {disp}"
+    if len(eqs) == 1 and not lows and not highs:
+        return f"Order total: {_format_money_display(eqs[0], cur)}"
+    return None
+
 
 def _format_condition(cond: Json.Object) -> str | None:
     op = cond.get("operator")
@@ -403,7 +626,7 @@ def _format_condition(cond: Json.Object) -> str | None:
         if not isinstance(unit, str):
             return None
         if isinstance(val, (int, float)):
-            vdisp = val
+            vdisp = float(val)
         elif isinstance(val, str):
             try:
                 vdisp = float(val)
@@ -411,13 +634,15 @@ def _format_condition(cond: Json.Object) -> str | None:
                 return None
         else:
             return None
-        return f"Weight {sym} {vdisp} {unit}"
+        ul = _weight_unit_label(unit)
+        return f"Weight: {sym} {_fmt_weight_num(vdisp)} {ul}"
     if typename == "MoneyV2":
         amt = crit.get("amount")
         cur = crit.get("currencyCode")
         if not isinstance(amt, str) or not isinstance(cur, str):
             return None
-        return f"Order total {sym} {amt} {cur}"
+        disp = _format_money_display(amt, cur)
+        return f"Order total: {sym} {disp}"
     return None
 
 
@@ -425,16 +650,46 @@ def _format_boundary(method: Json.Object) -> str:
     mcs = method.get("methodConditions")
     if not isinstance(mcs, list) or len(mcs) == 0:
         return "No tier limits"
+    weight_conds = [
+        c for c in mcs if isinstance(c, dict) and _parse_weight_triple(c) is not None
+    ]
+    money_conds = [
+        c for c in mcs if isinstance(c, dict) and _parse_money_triple(c) is not None
+    ]
+    other = [
+        c
+        for c in mcs
+        if isinstance(c, dict)
+        and c not in weight_conds
+        and c not in money_conds
+    ]
+
     parts: list[str] = []
-    for c in mcs:
-        if not isinstance(c, dict):
-            continue
+    w_seg = _format_weight_segment(weight_conds)
+    if w_seg:
+        parts.append(w_seg)
+    elif weight_conds:
+        parts.extend(
+            s
+            for c in weight_conds
+            if (s := _format_condition(c))
+        )
+    m_seg = _format_money_segment(money_conds)
+    if m_seg:
+        parts.append(m_seg)
+    elif money_conds:
+        parts.extend(
+            s
+            for c in money_conds
+            if (s := _format_condition(c))
+        )
+    for c in other:
         s = _format_condition(c)
         if s:
             parts.append(s)
     if not parts:
         return "Tier conditions"
-    return "; ".join(parts)
+    return " · ".join(parts)
 
 
 def _price_pair(method: Json.Object, factor: Decimal) -> tuple[str, str] | None:
@@ -451,7 +706,10 @@ def _price_pair(method: Json.Object, factor: Decimal) -> tuple[str, str] | None:
         if not isinstance(amt, str) or not isinstance(cur, str):
             return None
         new_amt = _scale_money(amt, factor)
-        return (f"{amt} {cur}", f"{new_amt} {cur}")
+        return (
+            _format_money_display(amt, cur),
+            _format_money_display(new_amt, cur),
+        )
     if typename == "DeliveryParticipant":
         ff = rp.get("fixedFee")
         if not isinstance(ff, dict):
@@ -461,7 +719,10 @@ def _price_pair(method: Json.Object, factor: Decimal) -> tuple[str, str] | None:
         if not isinstance(amt, str) or not isinstance(cur, str):
             return None
         new_amt = _scale_money(amt, factor)
-        return (f"{amt} {cur}", f"{new_amt} {cur}")
+        return (
+            _format_money_display(amt, cur),
+            _format_money_display(new_amt, cur),
+        )
     return None
 
 
@@ -482,7 +743,10 @@ def _price_pair_offset(
         if not isinstance(amt, str) or not isinstance(cur, str):
             return None
         new_amt = _offset_money(amt, delta)
-        return (f"{amt} {cur}", f"{new_amt} {cur}")
+        return (
+            _format_money_display(amt, cur),
+            _format_money_display(new_amt, cur),
+        )
     if typename == "DeliveryParticipant":
         ff = rp.get("fixedFee")
         if not isinstance(ff, dict):
@@ -492,7 +756,10 @@ def _price_pair_offset(
         if not isinstance(amt, str) or not isinstance(cur, str):
             return None
         new_amt = _offset_money(amt, delta)
-        return (f"{amt} {cur}", f"{new_amt} {cur}")
+        return (
+            _format_money_display(amt, cur),
+            _format_money_display(new_amt, cur),
+        )
     return None
 
 

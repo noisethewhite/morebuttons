@@ -52,14 +52,14 @@ interface PreviewResponse {
     error?: string
 }
 
-/** Compare first numeric token in strings like "12.00 USD". */
+/** Compare first amount in strings like "12.00 €" or "$14.60". */
 function priceChangeKind(current: string, next: string): "up" | "down" | "same" {
     const parseAmount = (s: string): number | null => {
-        const first = s.trim().split(/\s+/)[0]
-        if (!first) {
+        const m = s.match(/[\d]+(?:[.,]\d+)?/)
+        if (!m) {
             return null
         }
-        const n = parseFloat(first.replace(",", ""))
+        const n = parseFloat(m[0].replace(",", "."))
         return Number.isFinite(n) ? n : null
     }
     const a = parseAmount(current)
