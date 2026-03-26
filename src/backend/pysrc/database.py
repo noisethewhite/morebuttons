@@ -104,17 +104,14 @@ class Database(object):
             statement = sqla \
                 .select(self._table.c[self.Columns.TOKEN]) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
-            access_token = Database.execute(statement, str)
-            if access_token is None:
-                raise RuntimeError("Tried to get_access_token; it is not a string.")
-            return access_token
+            return Database.execute(statement, str)
 
         @heresy.singletonmethod
         def delete_token(self, shop_domain: str) -> None:
             statement = sqla \
                 .delete(self._table) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
-            _ = Database.execute(statement)
+            Database.execute(statement)
 
     @heresy.singleton
     class Webhooks(object):
@@ -151,7 +148,7 @@ class Database(object):
                     index_elements=[self.Columns.DOMAIN],
                     set_={ self.Columns.WEBHOOKS: webhooks }
                 )
-            _ = Database.execute(statement)
+            Database.execute(statement)
 
         @heresy.singletonmethod
         def get_webhooks(self, shop_domain: str) -> list[str] | None:
@@ -175,4 +172,4 @@ class Database(object):
             statement = sqla \
                 .delete(self._table) \
                 .where(self._table.c[self.Columns.DOMAIN] == shop_domain)
-            _ = Database.execute(statement)
+            Database.execute(statement)
