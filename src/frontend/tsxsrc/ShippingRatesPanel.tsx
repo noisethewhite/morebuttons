@@ -53,6 +53,23 @@ interface PreviewResponse {
     error?: string
 }
 
+/**
+ * Read JSON from a fetch Response. Returns null if the body is empty, looks like HTML
+ * (e.g. proxy error page), or is not valid JSON — avoids SyntaxError from res.json().
+ */
+async function readJsonBody<T>(res: Response): Promise<T | null> {
+    const text = await res.text()
+    const trimmed = text.trimStart()
+    if (trimmed === "" || trimmed.startsWith("<")) {
+        return null
+    }
+    try {
+        return JSON.parse(text) as T
+    } catch {
+        return null
+    }
+}
+
 /** Compare first amount in strings like "12.00 €" or "$14.60". */
 function priceChangeKind(current: string, next: string): "up" | "down" | "same" {
     const parseAmount = (s: string): number | null => {
@@ -110,14 +127,23 @@ export default function ShippingRatesPanel(): ReactNode {
             setLoadingNames(true)
             try {
                 const res = await AppBridge.fetchWithToken("/api/shipping-rate-names")
-                const data = (await res.json()) as NamesResponse
+                const data = await readJsonBody<NamesResponse>(res)
                 if (cancelled) {
                     return
                 }
                 if (!res.ok) {
                     setStatus({
                         kind: "err",
-                        text: data.error ?? `Failed to load rate names (${res.status}).`,
+                        text:
+                            data?.error ?? `Failed to load rate names (${res.status}).`,
+                    })
+                    setNames([])
+                    return
+                }
+                if (!data) {
+                    setStatus({
+                        kind: "err",
+                        text: `Failed to load rate names (${res.status}).`,
                     })
                     setNames([])
                     return
@@ -189,13 +215,22 @@ export default function ShippingRatesPanel(): ReactNode {
                     const res = await AppBridge.fetchWithToken(
                         `/api/shipping-rates/preview?${q.toString()}`
                     )
-                    const data = (await res.json()) as PreviewResponse
+                    const data = await readJsonBody<PreviewResponse>(res)
                     if (cancelled) {
                         return
                     }
                     if (!res.ok) {
                         setPreview(null)
-                        setPreviewError(data.error ?? `Preview failed (${res.status}).`)
+                        setPreviewError(
+                            data?.error ?? `Preview failed (${res.status}).`
+                        )
+                        return
+                    }
+                    if (!data) {
+                        setPreview(null)
+                        setPreviewError(
+                            `Preview failed (${res.status}): response was not JSON.`
+                        )
                         return
                     }
                     setPreview(data.profiles ?? [])
@@ -293,15 +328,22 @@ export default function ShippingRatesPanel(): ReactNode {
                     ...(zoneId ? { zoneId } : {}),
                 }),
             })
-            const data = (await res.json()) as AdjustResponse
+            const data = await readJsonBody<AdjustResponse>(res)
             if (!res.ok) {
                 setStatus({
                     kind: "err",
                     text:
-                        data.code === "MUTATIONS_BLOCKED"
+                        data?.code === "MUTATIONS_BLOCKED"
                             ? (data.error ??
                               "Mutations are disabled. Turn on Allow mutations in the GraphQL bar.")
-                            : (data.error ?? `Request failed (${res.status}).`),
+                            : (data?.error ?? `Request failed (${res.status}).`),
+                })
+                return
+            }
+            if (!data) {
+                setStatus({
+                    kind: "err",
+                    text: "Could not read server response after applying changes.",
                 })
                 return
             }
@@ -330,18 +372,37 @@ export default function ShippingRatesPanel(): ReactNode {
             if (zoneId) {
                 q.set("zoneId", zoneId)
             }
-            const prevRes = await AppBridge.fetchWithToken(
-                `/api/shipping-rates/preview?${q.toString()}`
-            )
-            const prevJson = (await prevRes.json()) as PreviewResponse
-            if (prevRes.ok && prevJson.profiles) {
-                setPreview(prevJson.profiles)
-                setPreviewWarnings(
-                    prevJson.warnings?.length ? prevJson.warnings.join(" ") : null
+            try {
+                const prevRes = await AppBridge.fetchWithToken(
+                    `/api/shipping-rates/preview?${q.toString()}`
                 )
-                setPreviewError(null)
+                const prevJson = await readJsonBody<PreviewResponse>(prevRes)
+                if (prevRes.ok && prevJson?.profiles) {
+                    setPreview(prevJson.profiles)
+                    setPreviewWarnings(
+                        prevJson.warnings?.length ? prevJson.warnings.join(" ") : null
+                    )
+                    setPreviewError(null)
+                } else if (prevRes.ok && !prevJson) {
+                    console.warn(
+                        "Preview refresh after adjust: response was not JSON (e.g. HTML error page)."
+                    )
+                    setPreviewError(
+                        "Could not refresh preview after applying; try nudging the percent to reload."
+                    )
+                } else if (!prevRes.ok) {
+                    setPreviewError(
+                        prevJson?.error ?? `Preview failed (${prevRes.status}).`
+                    )
+                }
+            } catch (previewErr) {
+                console.warn("Preview refresh after adjust failed:", previewErr)
+                setPreviewError(
+                    "Could not refresh preview after applying; try nudging the percent to reload."
+                )
             }
-        } catch {
+        } catch (error) {
+            console.error(error)
             setStatus({ kind: "err", text: "Could not apply changes." })
         } finally {
             setSubmitting(false)

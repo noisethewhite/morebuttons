@@ -5,6 +5,12 @@ from typing import Literal, cast
 from .fileloader import FileLoader
 from .graphql import GraphQL
 from .web_types import Json
+from .symbols import Currency, ComparisonSymbol
+
+
+# Cap methodDefinitionsToUpdate per deliveryProfileUpdate mutation (total across zones in
+# that mutation). Avoids oversized payloads, timeouts, and Shopify input limits.
+_MAX_DELIVERY_METHOD_UPDATES_PER_MUTATION = 25
 
 
 def _extract_errors(gql: Json.Value) -> list[str] | None:
@@ -151,6 +157,44 @@ def _method_update_input_offset(
 
 def _chunks(items: list[Json.Object], size: int) -> list[list[Json.Object]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+
+
+def _zone_method_update_batches(
+    by_zone: dict[str, list[Json.Object]],
+    max_method_updates_per_mutation: int,
+) -> list[list[Json.Object]]:
+    """
+    Split zone → method update inputs into several GraphQL mutations.
+
+    Each zone's list is split into slices of at most ``max_method_updates_per_mutation``,
+    then slices are packed into batches so each batch has at most that many updates total
+    (multiple zones may share one mutation when they fit).
+    """
+    pieces: list[tuple[str, list[Json.Value]]] = []
+    for zone_id, methods in by_zone.items():
+        for chunk in _chunks(methods, max_method_updates_per_mutation):
+            pieces.append((zone_id, cast(list[Json.Value], chunk)))
+    batches: list[list[Json.Object]] = []
+    cur: list[Json.Object] = []
+    cur_total = 0
+    for zid, mets in pieces:
+        n = len(mets)
+        if cur_total + n > max_method_updates_per_mutation and cur:
+            batches.append(cur)
+            cur = []
+            cur_total = 0
+        cur.append(
+            {
+                "id": zid,
+                "methodDefinitionsToUpdate": mets,
+            }
+        )
+        cur_total += n
+    if cur:
+        batches.append(cur)
+    return batches
 
 
 def collect_methods_and_warnings(
@@ -380,71 +424,6 @@ def _row_matches_profile_zone(
     return True
 
 
-_OPERATOR_SYMBOL: dict[str, str] = {
-    "LESS_THAN_OR_EQUAL_TO": "≤",
-    "GREATER_THAN_OR_EQUAL_TO": "≥",
-    "EQUAL_TO": "=",
-    "GREATER_THAN": ">",
-    "LESS_THAN": "<",
-    "NOT_EQUAL_TO": "≠",
-}
-
-_ZERO_DECIMAL_CURRENCIES: frozenset[str] = frozenset(
-    "BIF CLP DJF GNF HUF ISK JPY KMF KRW PYG RWF VND VUV XAF XOF XPF".split()
-)
-
-_CURRENCY_PREFIX: frozenset[str] = frozenset(
-    {"USD", "CAD", "AUD", "MXN", "SGD", "HKD", "NZD", "TWD", "PHP", "MYR", "THB"}
-)
-
-_CURRENCY_SYMBOL: dict[str, str] = {
-    "USD": "$",
-    "EUR": "€",
-    "GBP": "£",
-    "JPY": "¥",
-    "CAD": "C$",
-    "AUD": "A$",
-    "NZD": "NZ$",
-    "CHF": "CHF",
-    "SEK": "kr",
-    "NOK": "kr",
-    "DKK": "kr",
-    "PLN": "zł",
-    "CZK": "Kč",
-    "HUF": "Ft",
-    "RON": "lei",
-    "BGN": "лв",
-    "BRL": "R$",
-    "INR": "₹",
-    "KRW": "₩",
-    "CNY": "¥",
-    "ZAR": "R",
-    "AED": "د.إ",
-    "SAR": "﷼",
-    "ILS": "₪",
-    "TRY": "₺",
-}
-
-
-def _currency_symbol(code: str) -> str:
-    return _CURRENCY_SYMBOL.get(code, code)
-
-
-def _format_money_display(amount: str, currency_code: str) -> str:
-    d = Decimal(amount)
-    code = currency_code.upper()
-    if code in _ZERO_DECIMAL_CURRENCIES:
-        q = d.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-        fmt = str(int(q))
-    else:
-        q = d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        fmt = f"{q:.2f}"
-    sym = _currency_symbol(code)
-    if code in _CURRENCY_PREFIX:
-        return f"{sym}{fmt}"
-    return f"{fmt} {sym}"
-
-
 def _fmt_weight_num(v: float) -> str:
     if abs(v - round(v)) < 1e-9:
         return str(int(round(v)))
@@ -548,22 +527,6 @@ def _format_weight_segment(conds: list[Json.Object]) -> str | None:
     return None
 
 
-def _format_money_range(lo_amt: str, hi_amt: str, cur: str) -> str:
-    code = cur.upper()
-    d = Decimal(lo_amt)
-    d2 = Decimal(hi_amt)
-    if code in _ZERO_DECIMAL_CURRENCIES:
-        lo_s = str(int(d.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
-        hi_s = str(int(d2.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
-    else:
-        lo_s = f"{d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
-        hi_s = f"{d2.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
-    sym = _currency_symbol(code)
-    if code in _CURRENCY_PREFIX:
-        return f"Order total: {sym}{lo_s}–{sym}{hi_s}"
-    return f"Order total: {lo_s}–{hi_s} {sym}"
-
-
 def _format_money_segment(conds: list[Json.Object]) -> str | None:
     parsed: list[tuple[str, str, str]] = []
     for c in conds:
@@ -588,8 +551,8 @@ def _format_money_segment(conds: list[Json.Object]) -> str | None:
 
     if len(parsed) == 1:
         op, amt, c = parsed[0]
-        sym = _OPERATOR_SYMBOL.get(op, op)
-        disp = _format_money_display(amt, c)
+        sym = ComparisonSymbol.get(op)
+        disp = Currency.format_amount(amt, c)
         if op == "EQUAL_TO":
             return f"Order total: {disp}"
         return f"Order total: {sym} {disp}"
@@ -598,18 +561,18 @@ def _format_money_segment(conds: list[Json.Object]) -> str | None:
         lo_amt = max(Decimal(a) for a, _c in lows)
         hi_amt = min(Decimal(a) for a, _c in highs)
         if lo_amt <= hi_amt:
-            return _format_money_range(str(lo_amt), str(hi_amt), cur)
+            return Currency.format_range(str(lo_amt), str(hi_amt), cur)
 
     if lows and not highs:
         best = max(Decimal(a) for a, _c in lows)
-        disp = _format_money_display(str(best), cur)
+        disp = Currency.format_amount(str(best), cur)
         return f"Order total: ≥ {disp}"
     if highs and not lows:
         best = min(Decimal(a) for a, _c in highs)
-        disp = _format_money_display(str(best), cur)
+        disp = Currency.format_amount(str(best), cur)
         return f"Order total: ≤ {disp}"
     if len(eqs) == 1 and not lows and not highs:
-        return f"Order total: {_format_money_display(eqs[0], cur)}"
+        return f"Order total: {Currency.format_amount(eqs[0], cur)}"
     return None
 
 
@@ -619,7 +582,7 @@ def _format_condition(cond: Json.Object) -> str | None:
     if not isinstance(op, str) or not isinstance(crit, dict):
         return None
     typename = crit.get("__typename")
-    sym = _OPERATOR_SYMBOL.get(op, op)
+    sym = ComparisonSymbol.get(op)
     if typename == "Weight":
         unit = crit.get("unit")
         val = crit.get("value")
@@ -641,7 +604,7 @@ def _format_condition(cond: Json.Object) -> str | None:
         cur = crit.get("currencyCode")
         if not isinstance(amt, str) or not isinstance(cur, str):
             return None
-        disp = _format_money_display(amt, cur)
+        disp = Currency.format_amount(amt, cur)
         return f"Order total: {sym} {disp}"
     return None
 
@@ -707,8 +670,8 @@ def _price_pair(method: Json.Object, factor: Decimal) -> tuple[str, str] | None:
             return None
         new_amt = _scale_money(amt, factor)
         return (
-            _format_money_display(amt, cur),
-            _format_money_display(new_amt, cur),
+            Currency.format_amount(amt, cur),
+            Currency.format_amount(new_amt, cur),
         )
     if typename == "DeliveryParticipant":
         ff = rp.get("fixedFee")
@@ -720,8 +683,8 @@ def _price_pair(method: Json.Object, factor: Decimal) -> tuple[str, str] | None:
             return None
         new_amt = _scale_money(amt, factor)
         return (
-            _format_money_display(amt, cur),
-            _format_money_display(new_amt, cur),
+            Currency.format_amount(amt, cur),
+            Currency.format_amount(new_amt, cur),
         )
     return None
 
@@ -744,8 +707,8 @@ def _price_pair_offset(
             return None
         new_amt = _offset_money(amt, delta)
         return (
-            _format_money_display(amt, cur),
-            _format_money_display(new_amt, cur),
+            Currency.format_amount(amt, cur),
+            Currency.format_amount(new_amt, cur),
         )
     if typename == "DeliveryParticipant":
         ff = rp.get("fixedFee")
@@ -757,8 +720,8 @@ def _price_pair_offset(
             return None
         new_amt = _offset_money(amt, delta)
         return (
-            _format_money_display(amt, cur),
-            _format_money_display(new_amt, cur),
+            Currency.format_amount(amt, cur),
+            Currency.format_amount(new_amt, cur),
         )
     return None
 
@@ -956,15 +919,9 @@ def adjust_rates_by_name_percent(
 
     for profile_id, by_lg in by_profile.items():
         for lg_id, by_zone in by_lg.items():
-            zones_payload: list[Json.Object] = []
-            for zone_id, methods in by_zone.items():
-                zones_payload.append(
-                    {
-                        "id": zone_id,
-                        "methodDefinitionsToUpdate": cast(list[Json.Value], methods),
-                    }
-                )
-            for chunk in _chunks(zones_payload, 5):
+            for zone_batch in _zone_method_update_batches(
+                by_zone, _MAX_DELIVERY_METHOD_UPDATES_PER_MUTATION
+            ):
                 gql = GraphQL.send(
                     shop_domain,
                     access_token,
@@ -977,7 +934,7 @@ def adjust_rates_by_name_percent(
                                 "locationGroupsToUpdate": [
                                     {
                                         "id": lg_id,
-                                        "zonesToUpdate": cast(list[Json.Value], chunk),
+                                        "zonesToUpdate": cast(list[Json.Value], zone_batch),
                                     }
                                 ]
                             },
