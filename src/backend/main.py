@@ -1,4 +1,5 @@
 import sys
+from dataclasses import asdict
 from typing import Literal, cast
 from backend.pysrc.web_types import Json
 import flask
@@ -162,7 +163,10 @@ def shipping_rates_preview():
             zone_id,
             adjustment_mode,
         )
-        return flask.jsonify({ "profiles": profiles, "warnings": warnings })
+        return flask.jsonify({
+            "profiles": [asdict(p) for p in profiles],
+            "warnings": warnings,
+        })
     except RuntimeError as e:
         return flask.jsonify({ "error": str(e) }), 502
 

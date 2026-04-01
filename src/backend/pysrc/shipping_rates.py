@@ -1,29 +1,55 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal, cast
+
+from pydantic import TypeAdapter
 
 from .fileloader import FileLoader
 from .graphql import GraphQL
 from .graphqldc.shipping import (
     CatalogRowDC,
+    DeliveryParticipantInputDC,
+    DeliveryProfileInputDC,
+    DeliveryProfileLocationGroupInputDC,
     DeliveryProfileQueryDataDC,
     DeliveryProfilesQueryDataDC,
     DeliveryProfileUpdateDataDC,
+    DeliveryProfileUpdateVariablesDC,
     DeliveryRateDefinitionDC,
+    DeliveryRateDefinitionInputDC,
     MethodConditionDC,
     MethodDefinitionNodeDC,
+    MethodDefinitionUpdateInputDC,
+    MoneyInputDC,
     MoneyV2CriteriaDC,
+    PreviewProfileBlockDC,
+    PreviewRateRowDC,
+    PreviewZoneBlockDC,
     WeightCriteriaDC,
+    ZoneUpdateInputDC,
 )
 from .symbols import Currency, ComparisonSymbol
 from .web_types import Json
+from .utils import Utils
 
 
 # Cap methodDefinitionsToUpdate per deliveryProfileUpdate mutation (total across zones in
 # that mutation). Avoids oversized payloads, timeouts, and Shopify input limits.
 _MAX_DELIVERY_METHOD_UPDATES_PER_MUTATION = 25
+
+
+def _delivery_profile_update_variables_to_json(
+    v: DeliveryProfileUpdateVariablesDC,
+) -> Json.Object:
+    return cast(
+        Json.Object,
+        TypeAdapter(DeliveryProfileUpdateVariablesDC).dump_python(
+            v, exclude_none=True, mode="json"
+        ),
+    )
 
 
 def _scale_money(amount: str, factor: Decimal) -> str:
@@ -38,58 +64,47 @@ def _offset_money(amount: str, delta: Decimal) -> str:
     return str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-def _coerce_weight_value(val: object) -> float | None:
-    if isinstance(val, (int, float)):
-        return float(val)
-    if isinstance(val, str):
-        try:
-            return float(val)
-        except ValueError:
-            return None
-    return None
-
-
 def _method_update_input(
     method: MethodDefinitionNodeDC,
     factor: Decimal,
-) -> Json.Object | None:
+) -> MethodDefinitionUpdateInputDC | None:
     rp = method.rateProvider
     if rp is None:
         return None
     if isinstance(rp, DeliveryRateDefinitionDC):
         amt = rp.price.amount
         cur = rp.price.currencyCode
-        return {
-            "id": method.id,
-            "rateDefinition": {
-                "id": rp.id,
-                "price": {
-                    "amount": _scale_money(amt, factor),
-                    "currencyCode": cur,
-                },
-            },
-        }
+        return MethodDefinitionUpdateInputDC(
+            id=method.id,
+            rateDefinition=DeliveryRateDefinitionInputDC(
+                id=rp.id,
+                price=MoneyInputDC(
+                    amount=_scale_money(amt, factor),
+                    currencyCode=cur,
+                ),
+            ),
+        )
     ff = rp.fixedFee
     if ff is None:
         return None
     amt = ff.amount
     cur = ff.currencyCode
-    return {
-        "id": method.id,
-        "participant": {
-            "id": rp.id,
-            "fixedFee": {
-                "amount": _scale_money(amt, factor),
-                "currencyCode": cur,
-            },
-        },
-    }
+    return MethodDefinitionUpdateInputDC(
+        id=method.id,
+        participant=DeliveryParticipantInputDC(
+            id=rp.id,
+            fixedFee=MoneyInputDC(
+                amount=_scale_money(amt, factor),
+                currencyCode=cur,
+            ),
+        ),
+    )
 
 
 def _method_update_input_offset(
     method: MethodDefinitionNodeDC,
     delta: Decimal,
-) -> Json.Object | None:
+) -> MethodDefinitionUpdateInputDC | None:
     rp = method.rateProvider
     if rp is None:
         return None
@@ -97,42 +112,32 @@ def _method_update_input_offset(
         amt = rp.price.amount
         cur = rp.price.currencyCode
         new_amt = _offset_money(amt, delta)
-        return {
-            "id": method.id,
-            "rateDefinition": {
-                "id": rp.id,
-                "price": {
-                    "amount": new_amt,
-                    "currencyCode": cur,
-                },
-            },
-        }
+        return MethodDefinitionUpdateInputDC(
+            id=method.id,
+            rateDefinition=DeliveryRateDefinitionInputDC(
+                id=rp.id,
+                price=MoneyInputDC(amount=new_amt, currencyCode=cur),
+            ),
+        )
     ff = rp.fixedFee
     if ff is None:
         return None
     amt = ff.amount
     cur = ff.currencyCode
     new_amt = _offset_money(amt, delta)
-    return {
-        "id": method.id,
-        "participant": {
-            "id": rp.id,
-            "fixedFee": {
-                "amount": new_amt,
-                "currencyCode": cur,
-            },
-        },
-    }
-
-
-def _chunks(items: list[Json.Object], size: int) -> list[list[Json.Object]]:
-    return [items[i : i + size] for i in range(0, len(items), size)]
+    return MethodDefinitionUpdateInputDC(
+        id=method.id,
+        participant=DeliveryParticipantInputDC(
+            id=rp.id,
+            fixedFee=MoneyInputDC(amount=new_amt, currencyCode=cur),
+        ),
+    )
 
 
 def _zone_method_update_batches(
-    by_zone: dict[str, list[Json.Object]],
+    by_zone: dict[str, list[MethodDefinitionUpdateInputDC]],
     max_method_updates_per_mutation: int,
-) -> list[list[Json.Object]]:
+) -> list[list[ZoneUpdateInputDC]]:
     """
     Split zone → method update inputs into several GraphQL mutations.
 
@@ -140,12 +145,12 @@ def _zone_method_update_batches(
     then slices are packed into batches so each batch has at most that many updates total
     (multiple zones may share one mutation when they fit).
     """
-    pieces: list[tuple[str, list[Json.Value]]] = []
+    pieces: list[tuple[str, list[MethodDefinitionUpdateInputDC]]] = []
     for zone_id, methods in by_zone.items():
-        for chunk in _chunks(methods, max_method_updates_per_mutation):
-            pieces.append((zone_id, cast(list[Json.Value], chunk)))
-    batches: list[list[Json.Object]] = []
-    cur: list[Json.Object] = []
+        for chunk in Utils.chunks(methods, max_method_updates_per_mutation):
+            pieces.append((zone_id, chunk))
+    batches: list[list[ZoneUpdateInputDC]] = []
+    cur: list[ZoneUpdateInputDC] = []
     cur_total = 0
     for zid, mets in pieces:
         n = len(mets)
@@ -154,10 +159,7 @@ def _zone_method_update_batches(
             cur = []
             cur_total = 0
         cur.append(
-            {
-                "id": zid,
-                "methodDefinitionsToUpdate": mets,
-            }
+            ZoneUpdateInputDC(id=zid, methodDefinitionsToUpdate=mets)
         )
         cur_total += n
     if cur:
@@ -352,7 +354,7 @@ def _parse_weight_triple(
     op = cond.operator
     if not isinstance(op, str):
         return None
-    vdisp = _coerce_weight_value(crit.value)
+    vdisp = Utils.to_float(crit.value)
     if vdisp is None:
         return None
     return (op, vdisp, crit.unit)
@@ -473,7 +475,7 @@ def _format_condition(cond: MethodConditionDC) -> str | None:
         return None
     sym = ComparisonSymbol.get(op)
     if isinstance(crit, WeightCriteriaDC):
-        vdisp = _coerce_weight_value(crit.value)
+        vdisp = Utils.to_float(crit.value)
         if vdisp is None:
             return None
         ul = _weight_unit_label(crit.unit)
@@ -576,6 +578,18 @@ def _price_pair_offset(
     )
 
 
+@dataclass
+class _PreviewZoneAccum:
+    name: str
+    rows: list[PreviewRateRowDC] = field(default_factory=list)
+
+
+@dataclass
+class _PreviewProfileAccum:
+    name: str
+    zones: dict[str, _PreviewZoneAccum] = field(default_factory=dict)
+
+
 def preview_rate_changes(
     shop_domain: str,
     access_token: str,
@@ -584,7 +598,7 @@ def preview_rate_changes(
     profile_id: str | None = None,
     zone_id: str | None = None,
     adjustment_mode: Literal["percent", "offset"] = "percent",
-) -> tuple[list[Json.Object], list[str]]:
+) -> tuple[list[PreviewProfileBlockDC], list[str]]:
     """
     Returns (profiles, warnings) where each profile has
     id, name, zones: [{ id, name, rows: [{ id, boundary, current, new }] }].
@@ -597,7 +611,7 @@ def preview_rate_changes(
     else:
         amount_delta = Decimal(str(percent))
 
-    acc: dict[str, Json.Object] = {}
+    acc: dict[str, _PreviewProfileAccum] = {}
 
     for row in rows:
         if not _row_matches_profile_zone(row, profile_id, zone_id):
@@ -626,76 +640,34 @@ def preview_rate_changes(
         boundary = _format_boundary(m)
 
         if pid not in acc:
-            acc[pid] = {"name": pname, "zones": {}}
-        zmap = acc[pid]["zones"]
-        if not isinstance(zmap, dict):
-            continue
-        if zid not in zmap:
-            zmap[zid] = {"name": zname, "rows": []}
-        zent = zmap[zid]
-        if not isinstance(zent, dict):
-            continue
-        rlist = zent.get("rows")
-        if not isinstance(rlist, list):
-            continue
-        rlist.append(
-            {
-                "id": mid,
-                "boundary": boundary,
-                "current": cur_s,
-                "new": new_s,
-            }
+            acc[pid] = _PreviewProfileAccum(name=pname, zones={})
+        prof = acc[pid]
+        if zid not in prof.zones:
+            prof.zones[zid] = _PreviewZoneAccum(name=zname)
+        prof.zones[zid].rows.append(
+            PreviewRateRowDC(
+                id=mid,
+                boundary=boundary,
+                current=cur_s,
+                new=new_s,
+            )
         )
 
-    out: list[Json.Object] = []
-    for pid in sorted(
-        acc.keys(),
-        key=lambda i: (str(acc[i].get("name", "")).lower(), i),
-    ):
-        entry = acc[pid]
-        pname = entry.get("name", "")
-        if not isinstance(pname, str):
-            pname = ""
-        zmap = entry.get("zones")
-        if not isinstance(zmap, dict):
-            continue
-        zones_out: list[Json.Object] = []
-        for zid in sorted(
-            zmap.keys(),
-            key=lambda z: (
-                str(cast(Json.Object, cast(Json.Object, zmap)[z]).get("name", "")).lower(),
-                z,
-            ),
-        ):
-            zent = zmap[zid]
-            if not isinstance(zent, dict):
-                continue
-            zn = zent.get("name", "")
-            if not isinstance(zn, str):
-                zn = ""
-            rows_list = zent.get("rows")
-            if not isinstance(rows_list, list):
-                continue
+    out: list[PreviewProfileBlockDC] = []
+    for pid in sorted(acc.keys(), key=lambda i: (acc[i].name.lower(), i)):
+        pa = acc[pid]
+        zones_out: list[PreviewZoneBlockDC] = []
+        for zid in sorted(pa.zones.keys(), key=lambda z: (pa.zones[z].name.lower(), z)):
+            zb = pa.zones[zid]
             rows_sorted = sorted(
-                cast(list[Json.Object], rows_list),
-                key=lambda r: (
-                    str(r.get("boundary", "")),
-                    str(r.get("id", "")),
-                ),
+                zb.rows,
+                key=lambda r: (r.boundary, r.id),
             )
             zones_out.append(
-                {
-                    "id": zid,
-                    "name": zn,
-                    "rows": rows_sorted,
-                }
+                PreviewZoneBlockDC(id=zid, name=zb.name, rows=rows_sorted)
             )
         out.append(
-            {
-                "id": pid,
-                "name": pname,
-                "zones": zones_out,
-            }
+            PreviewProfileBlockDC(id=pid, name=pa.name, zones=zones_out)
         )
 
     return out, warnings
@@ -721,8 +693,8 @@ def adjust_rates_by_name_percent(
     else:
         amount_delta = Decimal(str(percent))
 
-    by_profile: dict[str, dict[str, dict[str, list[Json.Object]]]] = defaultdict(
-        lambda: defaultdict(lambda: defaultdict(list))
+    by_profile: dict[str, dict[str, dict[str, list[MethodDefinitionUpdateInputDC]]]] = (
+        defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     )
 
     updated = 0
@@ -764,15 +736,19 @@ def adjust_rates_by_name_percent(
                     shop_domain,
                     access_token,
                     query=mut,
-                    variables={
-                        "id": profile_id_loop,
-                        "profile": {
-                            "locationGroupsToUpdate": [{
-                                "id": lg_id,
-                                "zonesToUpdate": zone_batch,
-                            }],
-                        },
-                    },
+                    variables=_delivery_profile_update_variables_to_json(
+                        DeliveryProfileUpdateVariablesDC(
+                            id=profile_id_loop,
+                            profile=DeliveryProfileInputDC(
+                                locationGroupsToUpdate=[
+                                    DeliveryProfileLocationGroupInputDC(
+                                        id=lg_id,
+                                        zonesToUpdate=zone_batch,
+                                    )
+                                ]
+                            ),
+                        )
+                    ),
                     expected_type=DeliveryProfileUpdateDataDC,
                     raise_on_graphql_error=False,
                 )

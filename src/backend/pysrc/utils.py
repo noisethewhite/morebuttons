@@ -11,6 +11,7 @@ class DataclassProtocol(Protocol):
 
 
 _DC = TypeVar("_DC", bound=DataclassProtocol)
+_T = TypeVar("_T")
 
 
 class Utils(object):
@@ -29,3 +30,16 @@ class Utils(object):
             return TypeAdapter(dc).validate_python(slim)
         except (ValidationError, TypeError, ValueError):
             return None
+
+    @staticmethod
+    def to_float(val: object) -> float | None:
+        if isinstance(val, (int, float, str)):
+            try:
+                return float(val)
+            except:
+                pass
+        return None
+
+    @staticmethod
+    def chunks(items: list[_T], size: int) -> list[list[_T]]:
+        return [items[i : i + size] for i in range(0, len(items), size)]
