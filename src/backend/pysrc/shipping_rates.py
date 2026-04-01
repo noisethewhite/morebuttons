@@ -84,7 +84,8 @@ def collect_methods_and_warnings(
         )
         if parsed is None:
             warnings.append(
-                "Unexpected response shape from deliveryProfiles query (internal validation failed)."
+                "Unexpected response shape from deliveryProfiles" + \
+                " query (internal validation failed)."
             )
             break
         conn = parsed.deliveryProfiles
@@ -140,7 +141,8 @@ def _append_zone_methods(
         )
         if parsed is None:
             warnings.append(
-                "Unexpected response shape from deliveryProfile query (internal validation failed)."
+                "Unexpected response shape from deliveryProfile query" + \
+                "(internal validation failed)."
             )
             break
         dp = parsed.deliveryProfile
@@ -156,7 +158,8 @@ def _append_zone_methods(
             md = zn.methodDefinitions
             if md.pageInfo.hasNextPage is True:
                 warnings.append(
-                    f"More than 250 method definitions in a zone; only the first page was loaded (zone {zid})."
+                    f"More than 250 method definitions in a zone; " + \
+                    "only the first page was loaded (zone {zid})."
                 )
             for medge in md.edges:
                 mnode = medge.node
@@ -292,7 +295,9 @@ def adjust_rates_by_name_percent(
         amount_delta = Decimal(str(percent))
 
     by_profile: dict[str, dict[str, dict[str, list[MethodDefinitionUpdateInputDC]]]] = (
-        defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        defaultdict(
+            lambda: defaultdict(
+                lambda: defaultdict(list)))
     )
 
     updated = 0
@@ -352,7 +357,8 @@ def adjust_rates_by_name_percent(
                 if parsed is None:
                     if not soft_errs:
                         user_msgs.append(
-                            "Unexpected response shape from deliveryProfileUpdate (internal validation failed)."
+                            "Unexpected response shape from " + \
+                            "deliveryProfileUpdate (internal validation failed)."
                         )
                     continue
                 dpu = parsed.deliveryProfileUpdate

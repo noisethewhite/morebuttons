@@ -156,7 +156,8 @@ class MethodConditionList(list[MethodCondition]):
             lo = max(lows)
             hi = min(highs)
             if lo <= hi:
-                return f"Weight: {Utils.fmt_weight_num(lo)}–{Utils.fmt_weight_num(hi)} {label}"
+                return f"Weight: " + \
+                f"{Utils.fmt_weight_num(lo)}–{Utils.fmt_weight_num(hi)} {label}"
 
         if lows and not highs:
             return f"Weight: ≥{Utils.fmt_weight_num(max(lows))} {label}"
@@ -200,7 +201,9 @@ class MethodConditionList(list[MethodCondition]):
             lo_amt = max(Decimal(a) for a, _c in lows)
             hi_amt = min(Decimal(a) for a, _c in highs)
             if lo_amt <= hi_amt:
-                return Currency.format_range(str(lo_amt), str(hi_amt), cur)
+                return Currency.format_range(
+                    str(lo_amt), str(hi_amt), cur
+                )
 
         if lows and not highs:
             best = max(Decimal(a) for a, _c in lows)
@@ -334,14 +337,15 @@ class MethodDefinition:
         mcs = self.methodConditions
         if not mcs or len(mcs) == 0:
             return "No tier limits"
-        weight_conds = MethodConditionList([c for c in mcs if c.parse_weight_triple() is not None])
-        money_conds = MethodConditionList([c for c in mcs if c.parse_money_triple() is not None])
-        other = [
-            c
-            for c in mcs
-            if c not in weight_conds
-            and c not in money_conds
-        ]
+        weight_conds = MethodConditionList(
+            [c for c in mcs if c.parse_weight_triple() is not None]
+        )
+        money_conds = MethodConditionList(
+            [c for c in mcs if c.parse_money_triple() is not None]
+        )
+        other = MethodConditionList([
+            c for c in mcs if c not in weight_conds and c not in money_conds
+        ])
 
         parts: list[str] = []
         w_seg = weight_conds.format_weight_segment()
