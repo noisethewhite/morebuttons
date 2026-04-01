@@ -1,14 +1,25 @@
+from __future__ import annotations
+
 import requests
 import flask
 from flask import has_request_context
-from typing import cast
-
+from typing import Literal, TypeVar, cast, overload, Protocol, ClassVar
+import dataclasses
 from .environment import Environment
 from .database import Database
 from .fileloader import FileLoader
 from .graphql_counters import classify_graphql_operation, increment_request_graphql
+from .graphqldc.common import PageInfoDC
 from .rate_limiter import GraphQLThrottled, graphql_rate_limit, is_graphql_throttled_payload
+from .utils import Utils
 from .web_types import Json
+
+
+class DataclassProtocol(Protocol):
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[object]]]
+
+
+_DC = TypeVar("_DC", bound=DataclassProtocol)
 
 
 class MutationsBlockedError(Exception):
@@ -27,6 +38,79 @@ def mutations_allowed_from_g() -> bool:
 
 class GraphQL(object):
     @staticmethod
+    def extract_errors(gql: Json.Value) -> list[str] | None:
+        if not isinstance(gql, dict):
+            return ["Invalid GraphQL response."]
+        errs = gql.get("errors")
+        if not isinstance(errs, list) or not errs:
+            return None
+        out: list[str] = []
+        for e in errs:
+            if isinstance(e, dict):
+                msg = e.get("message")
+                if isinstance(msg, str):
+                    out.append(msg)
+            else:
+                out.append(repr(e))
+        return out
+
+    @staticmethod
+    def response_data(gql: Json.Value) -> Json.Object | None:
+        """Top-level ``data`` object from a Shopify Admin GraphQL JSON response."""
+        if not isinstance(gql, dict):
+            return None
+        d = gql.get("data")
+        return d if isinstance(d, dict) else None
+
+    @staticmethod
+    def next_page_cursor(pi: PageInfoDC | None) -> str | None:
+        if pi is None or pi.hasNextPage is not True:
+            return None
+        ec = pi.endCursor
+        if not isinstance(ec, str):
+            return None
+        return ec
+
+    @staticmethod
+    @overload
+    def send(
+        shop_domain: str,
+        access_token: str,
+        query: str,
+        variables: Json.Object | None = None,
+        *,
+        bypass_mutation_block: bool = False,
+        expected_type: None = None,
+        raise_on_graphql_error: Literal[True] = True,
+    ) -> Json.Value: ...
+
+    @staticmethod
+    @overload
+    def send(
+        shop_domain: str,
+        access_token: str,
+        query: str,
+        variables: Json.Object | None = None,
+        *,
+        bypass_mutation_block: bool = False,
+        expected_type: type[_DC],
+        raise_on_graphql_error: Literal[True] = True,
+    ) -> _DC | None: ...
+
+    @staticmethod
+    @overload
+    def send(
+        shop_domain: str,
+        access_token: str,
+        query: str,
+        variables: Json.Object | None = None,
+        *,
+        bypass_mutation_block: bool = False,
+        expected_type: type[_DC],
+        raise_on_graphql_error: Literal[False],
+    ) -> tuple[_DC | None, list[str]]: ...
+
+    @staticmethod
     @graphql_rate_limit(
         min_interval_seconds=0.15,
         throttle_cooldown_seconds=0.65,
@@ -39,7 +123,9 @@ class GraphQL(object):
         variables: Json.Object | None = None,
         *,
         bypass_mutation_block: bool = False,
-    ) -> Json.Value:
+        expected_type: type[_DC] | None = None,
+        raise_on_graphql_error: bool = True,
+    ) -> Json.Value | _DC | None | tuple[_DC | None, list[str]]:
         kind = classify_graphql_operation(query)
         if (
             kind == "mutation"
@@ -79,7 +165,26 @@ class GraphQL(object):
         if isinstance(payload, dict) and is_graphql_throttled_payload(payload):
             raise GraphQLThrottled()
         increment_request_graphql(kind)
-        return payload
+
+        if expected_type is None:
+            return payload
+
+        errs = GraphQL.extract_errors(payload)
+        data = GraphQL.response_data(payload)
+
+        if raise_on_graphql_error:
+            if errs:
+                raise RuntimeError("; ".join(errs))
+            if data is None:
+                raise RuntimeError("GraphQL response missing data.")
+            return Utils.dict2dc(data, expected_type)
+
+        if errs:
+            return None, errs
+        if data is None:
+            return None, ["GraphQL response missing data."]
+        parsed = Utils.dict2dc(data, expected_type)
+        return parsed, []
 
     @staticmethod
     def subscribe_webhook(
@@ -104,12 +209,12 @@ class GraphQL(object):
         )
         if not isinstance(gql, dict):
             raise RuntimeError("Unexpected GraphQL response for webhook subscription.")
-        if gql.get("errors"):
+        if errs := GraphQL.extract_errors(gql):
             raise RuntimeError(
-                f"GraphQL error creating webhook: {gql['errors']!r}"
+                f"GraphQL error creating webhook: {errs!r}"
             )
-        data = gql.get("data")
-        if not isinstance(data, dict):
+        data = GraphQL.response_data(gql)
+        if data is None:
             raise RuntimeError("GraphQL response missing data.")
         wsc = data.get("webhookSubscriptionCreate")
         if not isinstance(wsc, dict):
