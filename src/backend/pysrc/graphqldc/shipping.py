@@ -225,14 +225,14 @@ class MethodDefinition:
     methodConditions: list[MethodCondition] | None = None
     rateProvider: DeliveryRateDefinitionDC | DeliveryParticipantDC | None = None
 
-    def update_input_percent(self, factor: Decimal) -> MethodDefinitionUpdateInputDC | None:
+    def update_input_percent(self, factor: Decimal) -> MethodDefinitionUpdateInput | None:
         rp = self.rateProvider
         if rp is None:
             return None
         if isinstance(rp, DeliveryRateDefinitionDC):
             amt = rp.price.amount
             cur = rp.price.currencyCode
-            return MethodDefinitionUpdateInputDC(
+            return MethodDefinitionUpdateInput(
                 id=self.id,
                 rateDefinition=DeliveryRateDefinitionInputDC(
                     id=rp.id,
@@ -247,7 +247,7 @@ class MethodDefinition:
             return None
         amt = ff.amount
         cur = ff.currencyCode
-        return MethodDefinitionUpdateInputDC(
+        return MethodDefinitionUpdateInput(
             id=self.id,
             participant=DeliveryParticipantInputDC(
                 id=rp.id,
@@ -258,7 +258,7 @@ class MethodDefinition:
             ),
         )
 
-    def update_input_offset(self, delta: Decimal) -> MethodDefinitionUpdateInputDC | None:
+    def update_input_offset(self, delta: Decimal) -> MethodDefinitionUpdateInput | None:
         rp = self.rateProvider
         if rp is None:
             return None
@@ -266,7 +266,7 @@ class MethodDefinition:
             amt = rp.price.amount
             cur = rp.price.currencyCode
             new_amt = Utils.offset_money(amt, delta)
-            return MethodDefinitionUpdateInputDC(
+            return MethodDefinitionUpdateInput(
                 id=self.id,
                 rateDefinition=DeliveryRateDefinitionInputDC(
                     id=rp.id,
@@ -279,7 +279,7 @@ class MethodDefinition:
         amt = ff.amount
         cur = ff.currencyCode
         new_amt = Utils.offset_money(amt, delta)
-        return MethodDefinitionUpdateInputDC(
+        return MethodDefinitionUpdateInput(
             id=self.id,
             participant=DeliveryParticipantInputDC(
                 id=rp.id,
@@ -504,7 +504,7 @@ class DeliveryParticipantInputDC:
 
 
 @dataclass(config=_CONFIG)
-class MethodDefinitionUpdateInputDC:
+class MethodDefinitionUpdateInput:
     """``methodDefinitionsToUpdate`` entry (rate definition vs carrier participant)."""
 
     id: str
@@ -512,10 +512,61 @@ class MethodDefinitionUpdateInputDC:
     participant: DeliveryParticipantInputDC | None = None
 
 
+class MethodDefinitionUpdateInputsByZone(
+    defaultdict[str, list[MethodDefinitionUpdateInput]]
+):
+    """Zone id → method update inputs; ``defaultdict`` so ``[zone_id]`` yields a new list."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def update_batches(self, mutation_cap: int) -> list[list[ZoneUpdateInputDC]]:
+        """
+        Split zone → method update inputs into several GraphQL mutations.
+
+        Each zone's list is split into slices of at most ``mutation_cap``,
+        then slices are packed into batches so each batch has at most that many updates total
+        (multiple zones may share one mutation when they fit).
+        """
+        pieces: list[tuple[str, list[MethodDefinitionUpdateInput]]] = []
+        for zone_id, methods in self.items():
+            for chunk in Utils.chunks(methods, mutation_cap):
+                pieces.append((zone_id, chunk))
+        batches: list[list[ZoneUpdateInputDC]] = []
+        cur: list[ZoneUpdateInputDC] = []
+        cur_total = 0
+        for zid, mets in pieces:
+            n = len(mets)
+            if cur_total + n > mutation_cap and cur:
+                batches.append(cur)
+                cur = []
+                cur_total = 0
+            cur.append(
+                ZoneUpdateInputDC(id=zid, methodDefinitionsToUpdate=mets)
+            )
+            cur_total += n
+        if cur:
+            batches.append(cur)
+        return batches
+
+
+class MethodDefinitionUpdateInputsByProfile(
+    defaultdict[str, defaultdict[str, MethodDefinitionUpdateInputsByZone]]
+):
+    """Profile id → location group id → :class:`MethodDefinitionUpdateInputsByZone` (nested ``defaultdict``)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            lambda: defaultdict(
+                lambda: MethodDefinitionUpdateInputsByZone()
+            )
+        )
+
+
 @dataclass(config=_CONFIG)
 class ZoneUpdateInputDC:
     id: str
-    methodDefinitionsToUpdate: list[MethodDefinitionUpdateInputDC]
+    methodDefinitionsToUpdate: list[MethodDefinitionUpdateInput]
 
 
 @dataclass(config=_CONFIG)

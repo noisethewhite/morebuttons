@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal
@@ -16,51 +15,16 @@ from .graphqldc.shipping import (
     DeliveryProfilesQueryDataDC,
     DeliveryProfileUpdateDataDC,
     DeliveryProfileUpdateVariablesDC,
-    MethodDefinitionUpdateInputDC,
+    MethodDefinitionUpdateInputsByProfile,
     PreviewProfileBlockDC,
     PreviewRateRowDC,
-    PreviewZoneBlockDC,
-    ZoneUpdateInputDC,
+    PreviewZoneBlockDC
 )
-from .utils import Utils
 
 
 # Cap methodDefinitionsToUpdate per deliveryProfileUpdate mutation (total across zones in
 # that mutation). Avoids oversized payloads, timeouts, and Shopify input limits.
-_MAX_DELIVERY_METHOD_UPDATES_PER_MUTATION = 25
-
-
-def _zone_method_update_batches(
-    by_zone: dict[str, list[MethodDefinitionUpdateInputDC]],
-    max_method_updates_per_mutation: int,
-) -> list[list[ZoneUpdateInputDC]]:
-    """
-    Split zone → method update inputs into several GraphQL mutations.
-
-    Each zone's list is split into slices of at most ``max_method_updates_per_mutation``,
-    then slices are packed into batches so each batch has at most that many updates total
-    (multiple zones may share one mutation when they fit).
-    """
-    pieces: list[tuple[str, list[MethodDefinitionUpdateInputDC]]] = []
-    for zone_id, methods in by_zone.items():
-        for chunk in Utils.chunks(methods, max_method_updates_per_mutation):
-            pieces.append((zone_id, chunk))
-    batches: list[list[ZoneUpdateInputDC]] = []
-    cur: list[ZoneUpdateInputDC] = []
-    cur_total = 0
-    for zid, mets in pieces:
-        n = len(mets)
-        if cur_total + n > max_method_updates_per_mutation and cur:
-            batches.append(cur)
-            cur = []
-            cur_total = 0
-        cur.append(
-            ZoneUpdateInputDC(id=zid, methodDefinitionsToUpdate=mets)
-        )
-        cur_total += n
-    if cur:
-        batches.append(cur)
-    return batches
+_MUTATION_CAP = 25
 
 
 def collect_methods_and_warnings(
@@ -294,11 +258,7 @@ def adjust_rates_by_name_percent(
     else:
         amount_delta = Decimal(str(percent))
 
-    by_profile: dict[str, dict[str, dict[str, list[MethodDefinitionUpdateInputDC]]]] = (
-        defaultdict(
-            lambda: defaultdict(
-                lambda: defaultdict(list)))
-    )
+    by_profile= MethodDefinitionUpdateInputsByProfile()
 
     updated = 0
     for row in rows:
@@ -332,9 +292,7 @@ def adjust_rates_by_name_percent(
 
     for profile_id_loop, by_lg in by_profile.items():
         for lg_id, by_zone in by_lg.items():
-            for zone_batch in _zone_method_update_batches(
-                by_zone, _MAX_DELIVERY_METHOD_UPDATES_PER_MUTATION
-            ):
+            for zone_batch in by_zone.update_batches(_MUTATION_CAP):
                 parsed, soft_errs = GraphQL.send(
                     shop_domain,
                     access_token,
