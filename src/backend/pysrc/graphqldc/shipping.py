@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections import defaultdict
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
@@ -225,14 +225,14 @@ class MethodDefinition:
     methodConditions: list[MethodCondition] | None = None
     rateProvider: DeliveryRateDefinitionDC | DeliveryParticipantDC | None = None
 
-    def update_input_percent(self, factor: Decimal) -> MethodDefinitionUpdateInput | None:
+    def update_input_percent(self, factor: Decimal) -> MethodDefinitionInput | None:
         rp = self.rateProvider
         if rp is None:
             return None
         if isinstance(rp, DeliveryRateDefinitionDC):
             amt = rp.price.amount
             cur = rp.price.currencyCode
-            return MethodDefinitionUpdateInput(
+            return MethodDefinitionInput(
                 id=self.id,
                 rateDefinition=DeliveryRateDefinitionInputDC(
                     id=rp.id,
@@ -247,7 +247,7 @@ class MethodDefinition:
             return None
         amt = ff.amount
         cur = ff.currencyCode
-        return MethodDefinitionUpdateInput(
+        return MethodDefinitionInput(
             id=self.id,
             participant=DeliveryParticipantInputDC(
                 id=rp.id,
@@ -258,7 +258,7 @@ class MethodDefinition:
             ),
         )
 
-    def update_input_offset(self, delta: Decimal) -> MethodDefinitionUpdateInput | None:
+    def update_input_offset(self, delta: Decimal) -> MethodDefinitionInput | None:
         rp = self.rateProvider
         if rp is None:
             return None
@@ -266,7 +266,7 @@ class MethodDefinition:
             amt = rp.price.amount
             cur = rp.price.currencyCode
             new_amt = Utils.offset_money(amt, delta)
-            return MethodDefinitionUpdateInput(
+            return MethodDefinitionInput(
                 id=self.id,
                 rateDefinition=DeliveryRateDefinitionInputDC(
                     id=rp.id,
@@ -279,7 +279,7 @@ class MethodDefinition:
         amt = ff.amount
         cur = ff.currencyCode
         new_amt = Utils.offset_money(amt, delta)
-        return MethodDefinitionUpdateInput(
+        return MethodDefinitionInput(
             id=self.id,
             participant=DeliveryParticipantInputDC(
                 id=rp.id,
@@ -504,7 +504,7 @@ class DeliveryParticipantInputDC:
 
 
 @dataclass(config=_CONFIG)
-class MethodDefinitionUpdateInput:
+class MethodDefinitionInput:
     """``methodDefinitionsToUpdate`` entry (rate definition vs carrier participant)."""
 
     id: str
@@ -512,9 +512,7 @@ class MethodDefinitionUpdateInput:
     participant: DeliveryParticipantInputDC | None = None
 
 
-class MethodDefinitionUpdateInputsByZone(
-    defaultdict[str, list[MethodDefinitionUpdateInput]]
-):
+class MethodDefinitionInputsByZone(defaultdict[str, list[MethodDefinitionInput]]):
     """Zone id → method update inputs; ``defaultdict`` so ``[zone_id]`` yields a new list."""
 
     def __init__(self) -> None:
@@ -528,7 +526,7 @@ class MethodDefinitionUpdateInputsByZone(
         then slices are packed into batches so each batch has at most that many updates total
         (multiple zones may share one mutation when they fit).
         """
-        pieces: list[tuple[str, list[MethodDefinitionUpdateInput]]] = []
+        pieces: list[tuple[str, list[MethodDefinitionInput]]] = []
         for zone_id, methods in self.items():
             for chunk in Utils.chunks(methods, mutation_cap):
                 pieces.append((zone_id, chunk))
@@ -550,23 +548,68 @@ class MethodDefinitionUpdateInputsByZone(
         return batches
 
 
-class MethodDefinitionUpdateInputsByProfile(
-    defaultdict[str, defaultdict[str, MethodDefinitionUpdateInputsByZone]]
-):
-    """Profile id → location group id → :class:`MethodDefinitionUpdateInputsByZone` (nested ``defaultdict``)."""
+class MethodDefinitionInputsByLocationGroup(defaultdict[str, MethodDefinitionInputsByZone]):
+    """Location group id → :class:`MethodDefinitionInputsByZone` (nested ``defaultdict``)."""
 
     def __init__(self) -> None:
-        super().__init__(
-            lambda: defaultdict(
-                lambda: MethodDefinitionUpdateInputsByZone()
-            )
-        )
+        super().__init__(lambda: MethodDefinitionInputsByZone())
+
+
+class MethodDefinitionInputsByProfile(defaultdict[str, MethodDefinitionInputsByLocationGroup]):
+    """
+    Profile id → location group id → :class:`MethodDefinitionInputsByZone`
+    (nested ``defaultdict``).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(lambda: MethodDefinitionInputsByLocationGroup())
+
+    def update_by_name_percent(
+        self,
+        rows: CatalogRowList,
+        warnings: list[str],
+        rate_name: str,
+        percent: float,
+        profile_id: str | None = None,
+        zone_id: str | None = None,
+        adjustment_mode: Literal["percent", "offset"] = "percent"
+    ) -> tuple[int, list[str]]:
+        factor: Decimal | None = None
+        amount_delta: Decimal | None = None
+        if adjustment_mode == "percent":
+            factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
+        else:
+            amount_delta = Decimal(str(percent))
+        updated = 0
+        for row in rows:
+            if not row.matches_profile_zone(profile_id, zone_id):
+                continue
+            m = row.method
+            if m.name != rate_name:
+                continue
+            if adjustment_mode == "percent":
+                assert factor is not None
+                inp = m.update_input_percent(factor)
+            else:
+                assert amount_delta is not None
+                inp = m.update_input_offset(amount_delta)
+            if inp is None:
+                warnings.append(
+                    f"Skipped a rate named {rate_name!r} (unsupported rate type or missing price)."
+                )
+                continue
+            pid = row.profileId
+            lg = row.locationGroupId
+            zid = row.zoneId
+            self[pid][lg][zid].append(inp)
+            updated += 1
+        return updated, warnings
 
 
 @dataclass(config=_CONFIG)
 class ZoneUpdateInputDC:
     id: str
-    methodDefinitionsToUpdate: list[MethodDefinitionUpdateInput]
+    methodDefinitionsToUpdate: list[MethodDefinitionInput]
 
 
 @dataclass(config=_CONFIG)

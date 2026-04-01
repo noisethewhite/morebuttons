@@ -15,7 +15,7 @@ from .graphqldc.shipping import (
     DeliveryProfilesQueryDataDC,
     DeliveryProfileUpdateDataDC,
     DeliveryProfileUpdateVariablesDC,
-    MethodDefinitionUpdateInputsByProfile,
+    MethodDefinitionInputsByProfile,
     PreviewProfileBlockDC,
     PreviewRateRowDC,
     PreviewZoneBlockDC
@@ -75,7 +75,6 @@ def collect_methods_and_warnings(
         if nxt is None:
             break
         after_profiles = nxt
-
     return rows, warnings
 
 
@@ -245,47 +244,16 @@ def adjust_rates_by_name_percent(
     percent: float,
     profile_id: str | None = None,
     zone_id: str | None = None,
-    adjustment_mode: Literal["percent", "offset"] = "percent",
+    adjustment_mode: Literal["percent", "offset"] = "percent"
 ) -> tuple[int, list[str], list[str]]:
     """
     Returns (updated_method_count, warnings, user_error_messages).
     """
     rows, warnings = collect_methods_and_warnings(shop_domain, access_token)
-    factor: Decimal | None = None
-    amount_delta: Decimal | None = None
-    if adjustment_mode == "percent":
-        factor = Decimal(1) + Decimal(str(percent)) / Decimal(100)
-    else:
-        amount_delta = Decimal(str(percent))
-
-    by_profile= MethodDefinitionUpdateInputsByProfile()
-
-    updated = 0
-    for row in rows:
-        if not row.matches_profile_zone(profile_id, zone_id):
-            continue
-        m = row.method
-        if m.name != rate_name:
-            continue
-        if adjustment_mode == "percent":
-            assert factor is not None
-            inp = m.update_input_percent(factor)
-        else:
-            assert amount_delta is not None
-            inp = m.update_input_offset(amount_delta)
-        if inp is None:
-            warnings.append(
-                f"Skipped a rate named {rate_name!r} (unsupported rate type or missing price)."
-            )
-            continue
-        pid = row.profileId
-        lg = row.locationGroupId
-        zid = row.zoneId
-        by_profile[pid][lg][zid].append(inp)
-        updated += 1
-
-    if updated == 0:
-        return 0, warnings, ["No matching adjustable rates found for that name."]
+    by_profile = MethodDefinitionInputsByProfile()
+    updated, warnings = by_profile.update_by_name_percent(
+        rows, warnings, rate_name, percent, profile_id, zone_id, adjustment_mode
+    )
 
     mut = FileLoader.load("delivery_profile_update.gql")
     user_msgs: list[str] = []
