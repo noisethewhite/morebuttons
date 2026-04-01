@@ -8,9 +8,9 @@
   "main": "src/frontend/main.tsx",
   "scripts": {
     "build": "node ./esbuild.mjs",
-    "docker:heroku": "bash scripts/docker-heroku-push.sh",
-    "docker:heroku:release": "bash scripts/docker-heroku-release.sh",
-    "docker:heroku:deploy": "npm run docker:heroku && npm run docker:heroku:release"
+    "prod:push": "HEROKU_APP_NAME=$npm_package_name bash scripts/docker-heroku-push.sh",
+    "prod:release": "HEROKU_APP_NAME=$npm_package_name bash scripts/docker-heroku-release.sh",
+    "prod:deploy": "npm run prod:push && npm run prod:release"
   },
   "dependencies": {
     "esbuild": "^0.27.2",
