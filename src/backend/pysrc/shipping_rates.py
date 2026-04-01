@@ -2,28 +2,22 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Literal, cast
-
-from pydantic import TypeAdapter
 
 from .fileloader import FileLoader
 from .graphql import GraphQL
 from .graphqldc.shipping import (
     CatalogRowDC,
-    DeliveryParticipantInputDC,
     DeliveryProfileInputDC,
     DeliveryProfileLocationGroupInputDC,
     DeliveryProfileQueryDataDC,
     DeliveryProfilesQueryDataDC,
     DeliveryProfileUpdateDataDC,
     DeliveryProfileUpdateVariablesDC,
-    DeliveryRateDefinitionDC,
-    DeliveryRateDefinitionInputDC,
     MethodConditionDC,
-    MethodDefinitionNodeDC,
+    MethodDefinition,
     MethodDefinitionUpdateInputDC,
-    MoneyInputDC,
     MoneyV2CriteriaDC,
     PreviewProfileBlockDC,
     PreviewRateRowDC,
@@ -39,99 +33,6 @@ from .utils import Utils
 # Cap methodDefinitionsToUpdate per deliveryProfileUpdate mutation (total across zones in
 # that mutation). Avoids oversized payloads, timeouts, and Shopify input limits.
 _MAX_DELIVERY_METHOD_UPDATES_PER_MUTATION = 25
-
-
-def _delivery_profile_update_variables_to_json(
-    v: DeliveryProfileUpdateVariablesDC,
-) -> Json.Object:
-    return cast(
-        Json.Object,
-        TypeAdapter(DeliveryProfileUpdateVariablesDC).dump_python(
-            v, exclude_none=True, mode="json"
-        ),
-    )
-
-
-def _scale_money(amount: str, factor: Decimal) -> str:
-    d = Decimal(amount)
-    return str((d * factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-
-
-def _offset_money(amount: str, delta: Decimal) -> str:
-    d = Decimal(amount) + delta
-    if d < 0:
-        d = Decimal(0)
-    return str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-
-
-def _method_update_input(
-    method: MethodDefinitionNodeDC,
-    factor: Decimal,
-) -> MethodDefinitionUpdateInputDC | None:
-    rp = method.rateProvider
-    if rp is None:
-        return None
-    if isinstance(rp, DeliveryRateDefinitionDC):
-        amt = rp.price.amount
-        cur = rp.price.currencyCode
-        return MethodDefinitionUpdateInputDC(
-            id=method.id,
-            rateDefinition=DeliveryRateDefinitionInputDC(
-                id=rp.id,
-                price=MoneyInputDC(
-                    amount=_scale_money(amt, factor),
-                    currencyCode=cur,
-                ),
-            ),
-        )
-    ff = rp.fixedFee
-    if ff is None:
-        return None
-    amt = ff.amount
-    cur = ff.currencyCode
-    return MethodDefinitionUpdateInputDC(
-        id=method.id,
-        participant=DeliveryParticipantInputDC(
-            id=rp.id,
-            fixedFee=MoneyInputDC(
-                amount=_scale_money(amt, factor),
-                currencyCode=cur,
-            ),
-        ),
-    )
-
-
-def _method_update_input_offset(
-    method: MethodDefinitionNodeDC,
-    delta: Decimal,
-) -> MethodDefinitionUpdateInputDC | None:
-    rp = method.rateProvider
-    if rp is None:
-        return None
-    if isinstance(rp, DeliveryRateDefinitionDC):
-        amt = rp.price.amount
-        cur = rp.price.currencyCode
-        new_amt = _offset_money(amt, delta)
-        return MethodDefinitionUpdateInputDC(
-            id=method.id,
-            rateDefinition=DeliveryRateDefinitionInputDC(
-                id=rp.id,
-                price=MoneyInputDC(amount=new_amt, currencyCode=cur),
-            ),
-        )
-    ff = rp.fixedFee
-    if ff is None:
-        return None
-    amt = ff.amount
-    cur = ff.currencyCode
-    new_amt = _offset_money(amt, delta)
-    return MethodDefinitionUpdateInputDC(
-        id=method.id,
-        participant=DeliveryParticipantInputDC(
-            id=rp.id,
-            fixedFee=MoneyInputDC(amount=new_amt, currencyCode=cur),
-        ),
-    )
 
 
 def _zone_method_update_batches(
@@ -484,7 +385,7 @@ def _format_condition(cond: MethodConditionDC) -> str | None:
     return f"Order total: {sym} {disp}"
 
 
-def _format_boundary(method: MethodDefinitionNodeDC) -> str:
+def _format_boundary(method: MethodDefinition) -> str:
     mcs = method.methodConditions
     if not mcs or len(mcs) == 0:
         return "No tier limits"
@@ -523,59 +424,6 @@ def _format_boundary(method: MethodDefinitionNodeDC) -> str:
     if not parts:
         return "Tier conditions"
     return " · ".join(parts)
-
-
-def _price_pair(
-    method: MethodDefinitionNodeDC, factor: Decimal
-) -> tuple[str, str] | None:
-    rp = method.rateProvider
-    if rp is None:
-        return None
-    if isinstance(rp, DeliveryRateDefinitionDC):
-        amt = rp.price.amount
-        cur = rp.price.currencyCode
-        new_amt = _scale_money(amt, factor)
-        return (
-            Currency.format_amount(amt, cur),
-            Currency.format_amount(new_amt, cur),
-        )
-    ff = rp.fixedFee
-    if ff is None:
-        return None
-    amt = ff.amount
-    cur = ff.currencyCode
-    new_amt = _scale_money(amt, factor)
-    return (
-        Currency.format_amount(amt, cur),
-        Currency.format_amount(new_amt, cur),
-    )
-
-
-def _price_pair_offset(
-    method: MethodDefinitionNodeDC,
-    delta: Decimal,
-) -> tuple[str, str] | None:
-    rp = method.rateProvider
-    if rp is None:
-        return None
-    if isinstance(rp, DeliveryRateDefinitionDC):
-        amt = rp.price.amount
-        cur = rp.price.currencyCode
-        new_amt = _offset_money(amt, delta)
-        return (
-            Currency.format_amount(amt, cur),
-            Currency.format_amount(new_amt, cur),
-        )
-    ff = rp.fixedFee
-    if ff is None:
-        return None
-    amt = ff.amount
-    cur = ff.currencyCode
-    new_amt = _offset_money(amt, delta)
-    return (
-        Currency.format_amount(amt, cur),
-        Currency.format_amount(new_amt, cur),
-    )
 
 
 @dataclass
@@ -621,14 +469,14 @@ def preview_rate_changes(
             continue
         if adjustment_mode == "percent":
             assert factor is not None
-            if _method_update_input(m, factor) is None:
+            if m.update_input_percent(factor) is None:
                 continue
-            pair = _price_pair(m, factor)
+            pair = m.price_pair_percent(factor)
         else:
             assert amount_delta is not None
-            if _method_update_input_offset(m, amount_delta) is None:
+            if m.update_input_offset(amount_delta) is None:
                 continue
-            pair = _price_pair_offset(m, amount_delta)
+            pair = m.price_pair_offset(amount_delta)
         if pair is None:
             continue
         cur_s, new_s = pair
@@ -706,10 +554,10 @@ def adjust_rates_by_name_percent(
             continue
         if adjustment_mode == "percent":
             assert factor is not None
-            inp = _method_update_input(m, factor)
+            inp = m.update_input_percent(factor)
         else:
             assert amount_delta is not None
-            inp = _method_update_input_offset(m, amount_delta)
+            inp = m.update_input_offset(amount_delta)
         if inp is None:
             warnings.append(
                 f"Skipped a rate named {rate_name!r} (unsupported rate type or missing price)."
@@ -736,19 +584,17 @@ def adjust_rates_by_name_percent(
                     shop_domain,
                     access_token,
                     query=mut,
-                    variables=_delivery_profile_update_variables_to_json(
-                        DeliveryProfileUpdateVariablesDC(
-                            id=profile_id_loop,
-                            profile=DeliveryProfileInputDC(
-                                locationGroupsToUpdate=[
-                                    DeliveryProfileLocationGroupInputDC(
-                                        id=lg_id,
-                                        zonesToUpdate=zone_batch,
-                                    )
-                                ]
-                            ),
-                        )
-                    ),
+                    variables=DeliveryProfileUpdateVariablesDC(
+                        id=profile_id_loop,
+                        profile=DeliveryProfileInputDC(
+                            locationGroupsToUpdate=[
+                                DeliveryProfileLocationGroupInputDC(
+                                    id=lg_id,
+                                    zonesToUpdate=zone_batch,
+                                )
+                            ]
+                        ),
+                    ).to_json(),
                     expected_type=DeliveryProfileUpdateDataDC,
                     raise_on_graphql_error=False,
                 )

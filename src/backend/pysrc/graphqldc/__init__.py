@@ -1,4 +1,4 @@
-from .common import ConnectionDC, EdgeDC, PageInfoDC
+from .common import Connection, Edge, PageInfo
 from .shipping import (
     CatalogRowDC,
     DeliveryParticipantDC,
@@ -12,7 +12,7 @@ from .shipping import (
     DeliveryRateDefinitionDC,
     DeliveryRateDefinitionInputDC,
     MethodConditionDC,
-    MethodDefinitionNodeDC,
+    MethodDefinition,
     MethodDefinitionUpdateInputDC,
     MoneyInputDC,
     MoneyV2CriteriaDC,
@@ -25,7 +25,7 @@ from .shipping import (
 
 __all__ = [
     "CatalogRowDC",
-    "ConnectionDC",
+    "Connection",
     "DeliveryParticipantDC",
     "DeliveryParticipantInputDC",
     "DeliveryProfileInputDC",
@@ -36,13 +36,13 @@ __all__ = [
     "DeliveryProfileUpdateVariablesDC",
     "DeliveryRateDefinitionDC",
     "DeliveryRateDefinitionInputDC",
-    "EdgeDC",
+    "Edge",
     "MethodConditionDC",
-    "MethodDefinitionNodeDC",
+    "MethodDefinition",
     "MethodDefinitionUpdateInputDC",
     "MoneyInputDC",
     "MoneyV2CriteriaDC",
-    "PageInfoDC",
+    "PageInfo",
     "PreviewProfileBlockDC",
     "PreviewRateRowDC",
     "PreviewZoneBlockDC",

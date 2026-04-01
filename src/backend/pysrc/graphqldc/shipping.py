@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
-from .common import ConnectionDC
+from decimal import Decimal
+from .common import Connection, Jsonable
+from ..utils import Utils
+from ..symbols import Currency
 
 
 _CONFIG = ConfigDict(extra="ignore")
@@ -12,38 +15,38 @@ _CONFIG = ConfigDict(extra="ignore")
 
 
 @dataclass(config=_CONFIG)
-class LocationGroupRefDC(object):
+class DeliveryLocationGroup:
     id: str
 
 
 @dataclass(config=_CONFIG)
-class ProfileLocationGroupListDC(object):
-    locationGroup: LocationGroupRefDC
+class DeliveryProfileLocationGroup:
+    locationGroup: DeliveryLocationGroup
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileListNodeDC(object):
+class DeliveryProfile:
     id: str
     name: str | None = None
-    profileLocationGroups: list[ProfileLocationGroupListDC] | None = None
+    profileLocationGroups: list[DeliveryProfileLocationGroup] | None = None
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfilesQueryDataDC(object):
-    deliveryProfiles: ConnectionDC[DeliveryProfileListNodeDC]
+class DeliveryProfilesQueryDataDC:
+    deliveryProfiles: Connection[DeliveryProfile]
 
 
 # --- delivery_profile_group_zones.gql (method node + mutation payload) ---
 
 
 @dataclass(config=_CONFIG)
-class MoneyAmountDC(object):
+class MoneyAmountDC:
     amount: str
     currencyCode: str
 
 
 @dataclass(config=_CONFIG)
-class DeliveryRateDefinitionDC(object):
+class DeliveryRateDefinitionDC:
     # JSON key is ``__typename``; avoid leading ``__`` (dataclass name-mangling).
     # Required fields before ``Field`` so stdlib dataclass ordering rules are satisfied.
     id: str
@@ -51,64 +54,172 @@ class DeliveryRateDefinitionDC(object):
 
 
 @dataclass(config=_CONFIG)
-class DeliveryParticipantDC(object):
+class DeliveryParticipantDC:
     id: str
     fixedFee: MoneyAmountDC | None = None
     percentageOfRateFee: str | float | None = None
 
 
 @dataclass(config=_CONFIG)
-class WeightCriteriaDC(object):
+class WeightCriteriaDC:
     unit: str
     value: str | float | int | None = None
 
 
 @dataclass(config=_CONFIG)
-class MoneyV2CriteriaDC(object):
+class MoneyV2CriteriaDC:
     amount: str
     currencyCode: str
 
 
 @dataclass(config=_CONFIG)
-class MethodConditionDC(object):
+class MethodConditionDC:
     field: str | None = None
     operator: str | None = None
     conditionCriteria: WeightCriteriaDC | MoneyV2CriteriaDC | None = None
 
 
 @dataclass(config=_CONFIG)
-class MethodDefinitionNodeDC(object):
+class MethodDefinition:
     id: str
     name: str | None = None
     methodConditions: list[MethodConditionDC] | None = None
     rateProvider: DeliveryRateDefinitionDC | DeliveryParticipantDC | None = None
 
+    def update_input_percent(self, factor: Decimal) -> MethodDefinitionUpdateInputDC | None:
+        rp = self.rateProvider
+        if rp is None:
+            return None
+        if isinstance(rp, DeliveryRateDefinitionDC):
+            amt = rp.price.amount
+            cur = rp.price.currencyCode
+            return MethodDefinitionUpdateInputDC(
+                id=self.id,
+                rateDefinition=DeliveryRateDefinitionInputDC(
+                    id=rp.id,
+                    price=MoneyInputDC(
+                        amount=Utils.scale_money(amt, factor),
+                        currencyCode=cur,
+                    ),
+                ),
+            )
+        ff = rp.fixedFee
+        if ff is None:
+            return None
+        amt = ff.amount
+        cur = ff.currencyCode
+        return MethodDefinitionUpdateInputDC(
+            id=self.id,
+            participant=DeliveryParticipantInputDC(
+                id=rp.id,
+                fixedFee=MoneyInputDC(
+                    amount=Utils.scale_money(amt, factor),
+                    currencyCode=cur,
+                ),
+            ),
+        )
+
+    def update_input_offset(self, delta: Decimal) -> MethodDefinitionUpdateInputDC | None:
+        rp = self.rateProvider
+        if rp is None:
+            return None
+        if isinstance(rp, DeliveryRateDefinitionDC):
+            amt = rp.price.amount
+            cur = rp.price.currencyCode
+            new_amt = Utils.offset_money(amt, delta)
+            return MethodDefinitionUpdateInputDC(
+                id=self.id,
+                rateDefinition=DeliveryRateDefinitionInputDC(
+                    id=rp.id,
+                    price=MoneyInputDC(amount=new_amt, currencyCode=cur),
+                ),
+            )
+        ff = rp.fixedFee
+        if ff is None:
+            return None
+        amt = ff.amount
+        cur = ff.currencyCode
+        new_amt = Utils.offset_money(amt, delta)
+        return MethodDefinitionUpdateInputDC(
+            id=self.id,
+            participant=DeliveryParticipantInputDC(
+                id=rp.id,
+                fixedFee=MoneyInputDC(amount=new_amt, currencyCode=cur),
+            ),
+        )
+
+    def price_pair_percent(self, factor: Decimal) -> tuple[str, str] | None:
+        rp = self.rateProvider
+        if rp is None:
+            return None
+        if isinstance(rp, DeliveryRateDefinitionDC):
+            amt = rp.price.amount
+            cur = rp.price.currencyCode
+            new_amt = Utils.scale_money(amt, factor)
+            return (
+                Currency.format_amount(amt, cur),
+                Currency.format_amount(new_amt, cur),
+            )
+        ff = rp.fixedFee
+        if ff is None:
+            return None
+        amt = ff.amount
+        cur = ff.currencyCode
+        new_amt = Utils.scale_money(amt, factor)
+        return (
+            Currency.format_amount(amt, cur),
+            Currency.format_amount(new_amt, cur),
+        )
+
+    def price_pair_offset(self, delta: Decimal) -> tuple[str, str] | None:
+        rp = self.rateProvider
+        if rp is None:
+            return None
+        if isinstance(rp, DeliveryRateDefinitionDC):
+            amt = rp.price.amount
+            cur = rp.price.currencyCode
+            new_amt = Utils.offset_money(amt, delta)
+            return (
+                Currency.format_amount(amt, cur),
+                Currency.format_amount(new_amt, cur),
+            )
+        ff = rp.fixedFee
+        if ff is None:
+            return None
+        amt = ff.amount
+        cur = ff.currencyCode
+        new_amt = Utils.offset_money(amt, delta)
+        return (
+            Currency.format_amount(amt, cur),
+            Currency.format_amount(new_amt, cur),
+        )
+
 
 @dataclass(config=_CONFIG)
-class ZoneRefDC(object):
+class ZoneRefDC:
     id: str
     name: str | None = None
 
 
 @dataclass(config=_CONFIG)
-class LocationGroupZoneNodeDC(object):
+class LocationGroupZone:
     zone: ZoneRefDC
-    methodDefinitions: ConnectionDC[MethodDefinitionNodeDC]
+    methodDefinitions: Connection[MethodDefinition]
 
 
 @dataclass(config=_CONFIG)
-class ProfileLocationGroupZoneDC(object):
-    locationGroup: LocationGroupRefDC
-    locationGroupZones: ConnectionDC[LocationGroupZoneNodeDC]
+class ProfileLocationGroupZoneDC:
+    locationGroup: DeliveryLocationGroup
+    locationGroupZones: Connection[LocationGroupZone]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileZonesRootDC(object):
+class DeliveryProfileZonesRootDC:
     profileLocationGroups: list[ProfileLocationGroupZoneDC] | None = None
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileQueryDataDC(object):
+class DeliveryProfileQueryDataDC:
     deliveryProfile: DeliveryProfileZonesRootDC | None = None
 
 
@@ -116,20 +227,20 @@ class DeliveryProfileQueryDataDC(object):
 
 
 @dataclass(config=_CONFIG)
-class CatalogRowDC(object):
+class CatalogRowDC:
     profileId: str
     profileName: str
     locationGroupId: str
     zoneId: str
     zoneName: str
-    method: MethodDefinitionNodeDC
+    method: MethodDefinition
 
 
 # --- Preview API (computed in app, matches JSON shape for /shipping-rates/preview) ---
 
 
 @dataclass(config=_CONFIG)
-class PreviewRateRowDC(object):
+class PreviewRateRowDC:
     id: str
     boundary: str
     current: str
@@ -137,14 +248,14 @@ class PreviewRateRowDC(object):
 
 
 @dataclass(config=_CONFIG)
-class PreviewZoneBlockDC(object):
+class PreviewZoneBlockDC:
     id: str
     name: str
     rows: list[PreviewRateRowDC]
 
 
 @dataclass(config=_CONFIG)
-class PreviewProfileBlockDC(object):
+class PreviewProfileBlockDC:
     id: str
     name: str
     zones: list[PreviewZoneBlockDC]
@@ -154,7 +265,7 @@ class PreviewProfileBlockDC(object):
 
 
 @dataclass(config=_CONFIG)
-class MoneyInputDC(object):
+class MoneyInputDC:
     """Shopify ``MoneyInput`` (amount + currency) for mutation variables."""
 
     amount: str
@@ -162,19 +273,19 @@ class MoneyInputDC(object):
 
 
 @dataclass(config=_CONFIG)
-class DeliveryRateDefinitionInputDC(object):
+class DeliveryRateDefinitionInputDC:
     id: str
     price: MoneyInputDC
 
 
 @dataclass(config=_CONFIG)
-class DeliveryParticipantInputDC(object):
+class DeliveryParticipantInputDC:
     id: str
     fixedFee: MoneyInputDC
 
 
 @dataclass(config=_CONFIG)
-class MethodDefinitionUpdateInputDC(object):
+class MethodDefinitionUpdateInputDC:
     """``methodDefinitionsToUpdate`` entry (rate definition vs carrier participant)."""
 
     id: str
@@ -183,24 +294,24 @@ class MethodDefinitionUpdateInputDC(object):
 
 
 @dataclass(config=_CONFIG)
-class ZoneUpdateInputDC(object):
+class ZoneUpdateInputDC:
     id: str
     methodDefinitionsToUpdate: list[MethodDefinitionUpdateInputDC]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileLocationGroupInputDC(object):
+class DeliveryProfileLocationGroupInputDC:
     id: str
     zonesToUpdate: list[ZoneUpdateInputDC]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileInputDC(object):
+class DeliveryProfileInputDC:
     locationGroupsToUpdate: list[DeliveryProfileLocationGroupInputDC]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileUpdateVariablesDC(object):
+class DeliveryProfileUpdateVariablesDC(Jsonable):
     """Variables for ``DeliveryProfileUpdate`` (``$id``, ``$profile``)."""
 
     id: str
@@ -211,16 +322,16 @@ class DeliveryProfileUpdateVariablesDC(object):
 
 
 @dataclass(config=_CONFIG)
-class UserErrorDC(object):
+class UserErrorDC:
     field: list[str] | None = None
     message: str | None = None
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileUpdatePayloadDC(object):
+class DeliveryProfileUpdatePayloadDC:
     userErrors: list[UserErrorDC]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileUpdateDataDC(object):
+class DeliveryProfileUpdateDataDC:
     deliveryProfileUpdate: DeliveryProfileUpdatePayloadDC | None = None

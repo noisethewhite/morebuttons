@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TypeVar, Protocol, ClassVar
 from pydantic import TypeAdapter, ValidationError
+from decimal import Decimal, ROUND_HALF_UP
 from .web_types import Json
 
 
@@ -43,3 +44,15 @@ class Utils(object):
     @staticmethod
     def chunks(items: list[_T], size: int) -> list[list[_T]]:
         return [items[i : i + size] for i in range(0, len(items), size)]
+
+    @staticmethod
+    def scale_money(amount: str, factor: Decimal) -> str:
+        d = Decimal(amount)
+        return str((d * factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+    @staticmethod
+    def offset_money(amount: str, delta: Decimal) -> str:
+        d = Decimal(amount) + delta
+        if d < 0:
+            d = Decimal(0)
+        return str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
