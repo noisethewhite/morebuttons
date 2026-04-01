@@ -13,10 +13,8 @@ from backend.pysrc.environment import Environment
 from backend.pysrc.routes import Routes
 from backend.pysrc.shipping_rates import (
     adjust_rates_by_name_percent,
-    build_delivery_profile_filters,
     collect_methods_and_warnings,
-    preview_rate_changes,
-    unique_rate_names,
+    preview_rate_changes
 )
 
 
@@ -120,8 +118,8 @@ def shipping_rate_names():
         return flask.jsonify({ "error": "Not installed" }), 401
     try:
         rows, warnings = collect_methods_and_warnings(Server.shop_domain, token)
-        names = unique_rate_names(rows)
-        profiles, zones_by_profile = build_delivery_profile_filters(rows)
+        names = rows.unique_rate_names()
+        profiles, zones_by_profile = rows.build_delivery_profile_filters()
         return flask.jsonify({
             "names": names,
             "profiles": profiles,

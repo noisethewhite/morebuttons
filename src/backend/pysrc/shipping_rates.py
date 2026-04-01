@@ -3,30 +3,25 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Literal, cast
+from typing import Literal
 
 from .fileloader import FileLoader
 from .graphql import GraphQL
 from .graphqldc.shipping import (
-    CatalogRowDC,
+    CatalogRow,
+    CatalogRowList,
     DeliveryProfileInputDC,
     DeliveryProfileLocationGroupInputDC,
     DeliveryProfileQueryDataDC,
     DeliveryProfilesQueryDataDC,
     DeliveryProfileUpdateDataDC,
     DeliveryProfileUpdateVariablesDC,
-    MethodConditionDC,
-    MethodDefinition,
     MethodDefinitionUpdateInputDC,
-    MoneyV2CriteriaDC,
     PreviewProfileBlockDC,
     PreviewRateRowDC,
     PreviewZoneBlockDC,
-    WeightCriteriaDC,
     ZoneUpdateInputDC,
 )
-from .symbols import Currency, ComparisonSymbol
-from .web_types import Json
 from .utils import Utils
 
 
@@ -71,9 +66,9 @@ def _zone_method_update_batches(
 def collect_methods_and_warnings(
     shop_domain: str,
     access_token: str,
-) -> tuple[list[CatalogRowDC], list[str]]:
+) -> tuple[CatalogRowList, list[str]]:
     warnings: list[str] = []
-    rows: list[CatalogRowDC] = []
+    rows: CatalogRowList = CatalogRowList()
 
     q_profiles = FileLoader.load("delivery_profiles_page.gql")
     q_zones = FileLoader.load("delivery_profile_group_zones.gql")
@@ -126,7 +121,7 @@ def _append_zone_methods(
     profile_id: str,
     profile_name: str,
     location_group_id: str,
-    rows: list[CatalogRowDC],
+    rows: CatalogRowList,
     warnings: list[str],
 ) -> None:
     after_zones: str | None = None
@@ -166,7 +161,7 @@ def _append_zone_methods(
             for medge in md.edges:
                 mnode = medge.node
                 rows.append(
-                    CatalogRowDC(
+                    CatalogRow(
                         profileId=profile_id,
                         profileName=profile_name,
                         locationGroupId=location_group_id,
@@ -180,239 +175,6 @@ def _append_zone_methods(
         if nxt is None:
             break
         after_zones = nxt
-
-
-def unique_rate_names(rows: list[CatalogRowDC]) -> list[str]:
-    names: set[str] = set()
-    for row in rows:
-        n = row.method.name
-        if n:
-            names.add(n)
-    return sorted(names)
-
-
-def build_delivery_profile_filters(
-    rows: list[CatalogRowDC],
-) -> tuple[list[Json.Object], Json.Object]:
-    """Unique delivery profiles and zones per profile (for filter dropdowns)."""
-    profiles_map: dict[str, str] = {}
-    zones_by_profile: dict[str, dict[str, str]] = defaultdict(dict)
-    for row in rows:
-        profiles_map[row.profileId] = row.profileName
-        zones_by_profile[row.profileId][row.zoneId] = row.zoneName
-    profiles = [
-        {"id": k, "name": v}
-        for k, v in sorted(profiles_map.items(), key=lambda x: (x[1].lower(), x[0]))
-    ]
-    zones_out: Json.Object = {}
-    for pid in sorted(zones_by_profile.keys()):
-        zd = zones_by_profile[pid]
-        zones_list = [
-            {"id": zid, "name": zd[zid]}
-            for zid in sorted(zd.keys(), key=lambda z: (zd[z].lower(), z))
-        ]
-        zones_out[pid] = cast(list[Json.Value], zones_list)
-    return cast(list[Json.Object], profiles), zones_out
-
-
-def _fmt_weight_num(v: float) -> str:
-    if abs(v - round(v)) < 1e-9:
-        return str(int(round(v)))
-    s = f"{v:.6f}".rstrip("0").rstrip(".")
-    return s
-
-
-_WEIGHT_UNIT_LABEL: dict[str, str] = {
-    "KILOGRAMS": "kg",
-    "GRAMS": "g",
-    "POUNDS": "lb",
-    "OUNCES": "oz",
-}
-
-
-def _weight_unit_label(unit: str) -> str:
-    return _WEIGHT_UNIT_LABEL.get(unit, unit.lower())
-
-
-def _parse_weight_triple(
-    cond: MethodConditionDC,
-) -> tuple[str, float, str] | None:
-    crit = cond.conditionCriteria
-    if not isinstance(crit, WeightCriteriaDC):
-        return None
-    op = cond.operator
-    if not isinstance(op, str):
-        return None
-    vdisp = Utils.to_float(crit.value)
-    if vdisp is None:
-        return None
-    return (op, vdisp, crit.unit)
-
-
-def _parse_money_triple(
-    cond: MethodConditionDC,
-) -> tuple[str, str, str] | None:
-    crit = cond.conditionCriteria
-    if not isinstance(crit, MoneyV2CriteriaDC):
-        return None
-    op = cond.operator
-    if not isinstance(op, str):
-        return None
-    return (op, str(crit.amount), crit.currencyCode.upper())
-
-
-def _format_weight_segment(conds: list[MethodConditionDC]) -> str | None:
-    parsed: list[tuple[str, float, str]] = []
-    for c in conds:
-        p = _parse_weight_triple(c)
-        if p:
-            parsed.append(p)
-    if not parsed:
-        return None
-    units = {u for _, _, u in parsed}
-    if len(units) != 1:
-        return "; ".join(
-            s
-            for c in conds
-            if (s := _format_condition(c)) is not None
-        ) or None
-    unit = next(iter(units))
-    label = _weight_unit_label(unit)
-    low_ops = frozenset({"GREATER_THAN_OR_EQUAL_TO", "GREATER_THAN"})
-    high_ops = frozenset({"LESS_THAN_OR_EQUAL_TO", "LESS_THAN"})
-    lows = [v for op, v, _ in parsed if op in low_ops]
-    highs = [v for op, v, _ in parsed if op in high_ops]
-    eqs = [v for op, v, _ in parsed if op == "EQUAL_TO"]
-
-    if len(parsed) == 1:
-        op, v, _u = parsed[0]
-        if op in low_ops:
-            return f"Weight: ≥{_fmt_weight_num(v)} {label}"
-        if op in high_ops:
-            return f"Weight: ≤{_fmt_weight_num(v)} {label}"
-        if op == "EQUAL_TO":
-            return f"Weight: {_fmt_weight_num(v)} {label}"
-
-    if lows and highs:
-        lo = max(lows)
-        hi = min(highs)
-        if lo <= hi:
-            return f"Weight: {_fmt_weight_num(lo)}–{_fmt_weight_num(hi)} {label}"
-
-    if lows and not highs:
-        return f"Weight: ≥{_fmt_weight_num(max(lows))} {label}"
-    if highs and not lows:
-        return f"Weight: ≤{_fmt_weight_num(min(highs))} {label}"
-    if eqs and len(eqs) == 1 and not lows and not highs:
-        return f"Weight: {_fmt_weight_num(eqs[0])} {label}"
-    return None
-
-
-def _format_money_segment(conds: list[MethodConditionDC]) -> str | None:
-    parsed: list[tuple[str, str, str]] = []
-    for c in conds:
-        p = _parse_money_triple(c)
-        if p:
-            parsed.append(p)
-    if not parsed:
-        return None
-    currencies = {c for _, _, c in parsed}
-    if len(currencies) != 1:
-        return "; ".join(
-            s
-            for c in conds
-            if (s := _format_condition(c)) is not None
-        ) or None
-    cur = next(iter(currencies))
-    low_ops = frozenset({"GREATER_THAN_OR_EQUAL_TO", "GREATER_THAN"})
-    high_ops = frozenset({"LESS_THAN_OR_EQUAL_TO", "LESS_THAN"})
-    lows = [(a, c) for op, a, c in parsed if op in low_ops]
-    highs = [(a, c) for op, a, c in parsed if op in high_ops]
-    eqs = [a for op, a, _ in parsed if op == "EQUAL_TO"]
-
-    if len(parsed) == 1:
-        op, amt, c = parsed[0]
-        sym = ComparisonSymbol.get(op)
-        disp = Currency.format_amount(amt, c)
-        if op == "EQUAL_TO":
-            return f"Order total: {disp}"
-        return f"Order total: {sym} {disp}"
-
-    if lows and highs:
-        lo_amt = max(Decimal(a) for a, _c in lows)
-        hi_amt = min(Decimal(a) for a, _c in highs)
-        if lo_amt <= hi_amt:
-            return Currency.format_range(str(lo_amt), str(hi_amt), cur)
-
-    if lows and not highs:
-        best = max(Decimal(a) for a, _c in lows)
-        disp = Currency.format_amount(str(best), cur)
-        return f"Order total: ≥ {disp}"
-    if highs and not lows:
-        best = min(Decimal(a) for a, _c in highs)
-        disp = Currency.format_amount(str(best), cur)
-        return f"Order total: ≤ {disp}"
-    if len(eqs) == 1 and not lows and not highs:
-        return f"Order total: {Currency.format_amount(eqs[0], cur)}"
-    return None
-
-
-def _format_condition(cond: MethodConditionDC) -> str | None:
-    op = cond.operator
-    crit = cond.conditionCriteria
-    if not isinstance(op, str) or crit is None:
-        return None
-    sym = ComparisonSymbol.get(op)
-    if isinstance(crit, WeightCriteriaDC):
-        vdisp = Utils.to_float(crit.value)
-        if vdisp is None:
-            return None
-        ul = _weight_unit_label(crit.unit)
-        return f"Weight: {sym} {_fmt_weight_num(vdisp)} {ul}"
-    disp = Currency.format_amount(str(crit.amount), crit.currencyCode)
-    return f"Order total: {sym} {disp}"
-
-
-def _format_boundary(method: MethodDefinition) -> str:
-    mcs = method.methodConditions
-    if not mcs or len(mcs) == 0:
-        return "No tier limits"
-    weight_conds = [c for c in mcs if _parse_weight_triple(c) is not None]
-    money_conds = [c for c in mcs if _parse_money_triple(c) is not None]
-    other = [
-        c
-        for c in mcs
-        if c not in weight_conds
-        and c not in money_conds
-    ]
-
-    parts: list[str] = []
-    w_seg = _format_weight_segment(weight_conds)
-    if w_seg:
-        parts.append(w_seg)
-    elif weight_conds:
-        parts.extend(
-            s
-            for c in weight_conds
-            if (s := _format_condition(c))
-        )
-    m_seg = _format_money_segment(money_conds)
-    if m_seg:
-        parts.append(m_seg)
-    elif money_conds:
-        parts.extend(
-            s
-            for c in money_conds
-            if (s := _format_condition(c))
-        )
-    for c in other:
-        s = _format_condition(c)
-        if s:
-            parts.append(s)
-    if not parts:
-        return "Tier conditions"
-    return " · ".join(parts)
-
 
 @dataclass
 class _PreviewZoneAccum:
@@ -473,7 +235,7 @@ def preview_rate_changes(
         pname = row.profileName
         zname = row.zoneName
         mid = m.id
-        boundary = _format_boundary(m)
+        boundary = m.format_boundary()
 
         if pid not in acc:
             acc[pid] = _PreviewProfileAccum(name=pname, zones={})

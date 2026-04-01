@@ -18,6 +18,14 @@ _T = TypeVar("_T")
 class Utils(object):
     """Small helpers shared across backend modules."""
 
+
+    WEIGHT_UNIT_LABEL: dict[str, str] = {
+        "KILOGRAMS": "kg",
+        "GRAMS": "g",
+        "POUNDS": "lb",
+        "OUNCES": "oz",
+    }
+
     @staticmethod
     def dict2dc(data: Json.Object, dc: type[_DC]) -> _DC | None:
         """
@@ -56,3 +64,14 @@ class Utils(object):
         if d < 0:
             d = Decimal(0)
         return str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+    @staticmethod
+    def weight_unit_label(unit: str) -> str:
+        return Utils.WEIGHT_UNIT_LABEL.get(unit, unit.lower())
+
+    @staticmethod
+    def fmt_weight_num(v: float) -> str:
+        if abs(v - round(v)) < 1e-9:
+            return str(int(round(v)))
+        s = f"{v:.6f}".rstrip("0").rstrip(".")
+        return s
