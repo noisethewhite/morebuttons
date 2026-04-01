@@ -14,7 +14,7 @@ _T = TypeVar("_T")
 
 @dataclass(config=_CONFIG)
 class PageInfo(object):
-    hasNextPage: bool
+    hasNextPage: bool | None = None
     endCursor: str | None = None
 
 

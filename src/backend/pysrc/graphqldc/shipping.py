@@ -235,6 +235,13 @@ class CatalogRowDC:
     zoneName: str
     method: MethodDefinition
 
+    def matches_profile_zone(self, profile_id: str | None, zone_id: str | None) -> bool:
+        if profile_id is not None and self.profileId != profile_id:
+            return False
+        if zone_id is not None and self.zoneId != zone_id:
+            return False
+        return True
+
 
 # --- Preview API (computed in app, matches JSON shape for /shipping-rates/preview) ---
 

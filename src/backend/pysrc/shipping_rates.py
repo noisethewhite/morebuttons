@@ -215,18 +215,6 @@ def build_delivery_profile_filters(
     return cast(list[Json.Object], profiles), zones_out
 
 
-def _row_matches_profile_zone(
-    row: CatalogRowDC,
-    profile_id: str | None,
-    zone_id: str | None,
-) -> bool:
-    if profile_id is not None and row.profileId != profile_id:
-        return False
-    if zone_id is not None and row.zoneId != zone_id:
-        return False
-    return True
-
-
 def _fmt_weight_num(v: float) -> str:
     if abs(v - round(v)) < 1e-9:
         return str(int(round(v)))
@@ -462,7 +450,7 @@ def preview_rate_changes(
     acc: dict[str, _PreviewProfileAccum] = {}
 
     for row in rows:
-        if not _row_matches_profile_zone(row, profile_id, zone_id):
+        if not row.matches_profile_zone(profile_id, zone_id):
             continue
         m = row.method
         if m.name != rate_name:
@@ -547,7 +535,7 @@ def adjust_rates_by_name_percent(
 
     updated = 0
     for row in rows:
-        if not _row_matches_profile_zone(row, profile_id, zone_id):
+        if not row.matches_profile_zone(profile_id, zone_id):
             continue
         m = row.method
         if m.name != rate_name:
