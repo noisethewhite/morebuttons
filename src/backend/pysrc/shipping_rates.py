@@ -9,16 +9,16 @@ from .graphql import GraphQL
 from .graphqldc.shipping import (
     CatalogRow,
     CatalogRowList,
-    DeliveryProfileInputDC,
-    DeliveryProfileLocationGroupInputDC,
-    DeliveryProfileQueryDataDC,
-    DeliveryProfilesQueryDataDC,
-    DeliveryProfileUpdateDataDC,
-    DeliveryProfileUpdateVariablesDC,
+    DeliveryProfileInput,
+    DeliveryProfileLocationGroupInput,
+    DeliveryProfileQueryData,
+    DeliveryProfilesQueryData,
+    DeliveryProfileUpdateData,
+    DeliveryProfileUpdateVariables,
     MethodDefinitionInputsByProfile,
-    PreviewProfileBlockDC,
-    PreviewRateRowDC,
-    PreviewZoneBlockDC
+    PreviewProfileBlock,
+    PreviewRateRow,
+    PreviewZoneBlock
 )
 
 
@@ -44,7 +44,7 @@ def collect_methods_and_warnings(
             access_token,
             q_profiles,
             {"first": 50, "after": after_profiles},
-            expected_type=DeliveryProfilesQueryDataDC,
+            expected_type=DeliveryProfilesQueryData,
         )
         if parsed is None:
             warnings.append(
@@ -71,7 +71,7 @@ def collect_methods_and_warnings(
                     warnings,
                 )
 
-        nxt = GraphQL.next_page_cursor(conn.pageInfo)
+        nxt = conn.pageInfo.next_page_cursor()
         if nxt is None:
             break
         after_profiles = nxt
@@ -100,7 +100,7 @@ def _append_zone_methods(
                 "zonesFirst": 50,
                 "zonesAfter": after_zones,
             },
-            expected_type=DeliveryProfileQueryDataDC,
+            expected_type=DeliveryProfileQueryData,
         )
         if parsed is None:
             warnings.append(
@@ -137,7 +137,7 @@ def _append_zone_methods(
                     )
                 )
 
-        nxt = GraphQL.next_page_cursor(zconn.pageInfo)
+        nxt = zconn.pageInfo.next_page_cursor()
         if nxt is None:
             break
         after_zones = nxt
@@ -145,7 +145,7 @@ def _append_zone_methods(
 @dataclass
 class _PreviewZoneAccum:
     name: str
-    rows: list[PreviewRateRowDC] = field(default_factory=list)
+    rows: list[PreviewRateRow] = field(default_factory=list)
 
 
 @dataclass
@@ -162,7 +162,7 @@ def preview_rate_changes(
     profile_id: str | None = None,
     zone_id: str | None = None,
     adjustment_mode: Literal["percent", "offset"] = "percent",
-) -> tuple[list[PreviewProfileBlockDC], list[str]]:
+) -> tuple[list[PreviewProfileBlock], list[str]]:
     """
     Returns (profiles, warnings) where each profile has
     id, name, zones: [{ id, name, rows: [{ id, boundary, current, new }] }].
@@ -209,7 +209,7 @@ def preview_rate_changes(
         if zid not in prof.zones:
             prof.zones[zid] = _PreviewZoneAccum(name=zname)
         prof.zones[zid].rows.append(
-            PreviewRateRowDC(
+            PreviewRateRow(
                 id=mid,
                 boundary=boundary,
                 current=cur_s,
@@ -217,10 +217,10 @@ def preview_rate_changes(
             )
         )
 
-    out: list[PreviewProfileBlockDC] = []
+    out: list[PreviewProfileBlock] = []
     for pid in sorted(acc.keys(), key=lambda i: (acc[i].name.lower(), i)):
         pa = acc[pid]
-        zones_out: list[PreviewZoneBlockDC] = []
+        zones_out: list[PreviewZoneBlock] = []
         for zid in sorted(pa.zones.keys(), key=lambda z: (pa.zones[z].name.lower(), z)):
             zb = pa.zones[zid]
             rows_sorted = sorted(
@@ -228,10 +228,10 @@ def preview_rate_changes(
                 key=lambda r: (r.boundary, r.id),
             )
             zones_out.append(
-                PreviewZoneBlockDC(id=zid, name=zb.name, rows=rows_sorted)
+                PreviewZoneBlock(id=zid, name=zb.name, rows=rows_sorted)
             )
         out.append(
-            PreviewProfileBlockDC(id=pid, name=pa.name, zones=zones_out)
+            PreviewProfileBlock(id=pid, name=pa.name, zones=zones_out)
         )
 
     return out, warnings
@@ -265,18 +265,18 @@ def adjust_rates_by_name_percent(
                     shop_domain,
                     access_token,
                     query=mut,
-                    variables=DeliveryProfileUpdateVariablesDC(
+                    variables=DeliveryProfileUpdateVariables(
                         id=profile_id_loop,
-                        profile=DeliveryProfileInputDC(
+                        profile=DeliveryProfileInput(
                             locationGroupsToUpdate=[
-                                DeliveryProfileLocationGroupInputDC(
+                                DeliveryProfileLocationGroupInput(
                                     id=lg_id,
                                     zonesToUpdate=zone_batch,
                                 )
                             ]
                         ),
                     ).to_json(),
-                    expected_type=DeliveryProfileUpdateDataDC,
+                    expected_type=DeliveryProfileUpdateData,
                     raise_on_graphql_error=False,
                 )
                 user_msgs.extend(soft_errs)

@@ -3,7 +3,9 @@ from functools import lru_cache
 
 
 class FileLoader(object):
-    _GRAPHQL_DIR: str = os.path.join(os.path.dirname(__file__), "graphql")
+    _GRAPHQL_DIR: str = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "graphql")
+    )
 
     @staticmethod
     @lru_cache(maxsize=None)

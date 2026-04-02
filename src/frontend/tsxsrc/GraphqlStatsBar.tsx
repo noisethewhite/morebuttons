@@ -3,7 +3,6 @@ import AppBridge from "../tssrc/app_bridge"
 import { setGraphqlHeaderListener } from "../tssrc/graphql_fetch_interceptor"
 
 const COOLDOWN_MS = 2000
-const POLL_MS = 3000
 
 const fetchInit: RequestInit = { credentials: "same-origin" }
 
@@ -63,14 +62,8 @@ export default function GraphqlStatsBar(): ReactNode {
                 return
             }
         })()
-        const interval = setInterval(() => {
-            if (!cancelled) {
-                void fetchMutationAllow(true)
-            }
-        }, POLL_MS)
         return () => {
             cancelled = true
-            clearInterval(interval)
         }
     }, [fetchMutationAllow])
 

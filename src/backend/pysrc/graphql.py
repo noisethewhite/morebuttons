@@ -9,7 +9,6 @@ from .environment import Environment
 from .database import Database
 from .fileloader import FileLoader
 from .graphql_counters import classify_graphql_operation, increment_request_graphql
-from .graphqldc.common import PageInfo
 from .rate_limiter import GraphQLThrottled, graphql_rate_limit, is_graphql_throttled_payload
 from .utils import Utils
 from .web_types import Json
@@ -38,12 +37,12 @@ def mutations_allowed_from_g() -> bool:
 
 class GraphQL(object):
     @staticmethod
-    def extract_errors(gql: Json.Value) -> list[str] | None:
+    def extract_errors(gql: Json.Value) -> list[str]:
         if not isinstance(gql, dict):
             return ["Invalid GraphQL response."]
         errs = gql.get("errors")
         if not isinstance(errs, list) or not errs:
-            return None
+            return []
         out: list[str] = []
         for e in errs:
             if isinstance(e, dict):
@@ -61,15 +60,6 @@ class GraphQL(object):
             return None
         d = gql.get("data")
         return d if isinstance(d, dict) else None
-
-    @staticmethod
-    def next_page_cursor(pi: PageInfo | None) -> str | None:
-        if pi is None or pi.hasNextPage is not True:
-            return None
-        ec = pi.endCursor
-        if not isinstance(ec, str):
-            return None
-        return ec
 
     @staticmethod
     @overload

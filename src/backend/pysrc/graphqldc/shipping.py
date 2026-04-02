@@ -36,7 +36,7 @@ class DeliveryProfile:
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfilesQueryDataDC:
+class DeliveryProfilesQueryData:
     deliveryProfiles: Connection[DeliveryProfile]
 
 
@@ -44,34 +44,34 @@ class DeliveryProfilesQueryDataDC:
 
 
 @dataclass(config=_CONFIG)
-class MoneyAmountDC:
+class MoneyAmount:
     amount: str
     currencyCode: str
 
 
 @dataclass(config=_CONFIG)
-class DeliveryRateDefinitionDC:
+class DeliveryRateDefinition:
     # JSON key is ``__typename``; avoid leading ``__`` (dataclass name-mangling).
     # Required fields before ``Field`` so stdlib dataclass ordering rules are satisfied.
     id: str
-    price: MoneyAmountDC
+    price: MoneyAmount
 
 
 @dataclass(config=_CONFIG)
-class DeliveryParticipantDC:
+class DeliveryParticipant:
     id: str
-    fixedFee: MoneyAmountDC | None = None
+    fixedFee: MoneyAmount | None = None
     percentageOfRateFee: str | float | None = None
 
 
 @dataclass(config=_CONFIG)
-class WeightCriteriaDC:
+class WeightCriteria:
     unit: str
     value: str | float | int | None = None
 
 
 @dataclass(config=_CONFIG)
-class MoneyV2CriteriaDC:
+class MoneyV2Criteria:
     amount: str
     currencyCode: str
 
@@ -80,11 +80,11 @@ class MoneyV2CriteriaDC:
 class MethodCondition:
     field: str | None = None
     operator: str | None = None
-    conditionCriteria: WeightCriteriaDC | MoneyV2CriteriaDC | None = None
+    conditionCriteria: WeightCriteria | MoneyV2Criteria | None = None
 
     def parse_weight_triple(self) -> tuple[str, float, str] | None:
         crit = self.conditionCriteria
-        if not isinstance(crit, WeightCriteriaDC):
+        if not isinstance(crit, WeightCriteria):
             return None
         op = self.operator
         if not isinstance(op, str):
@@ -96,7 +96,7 @@ class MethodCondition:
 
     def parse_money_triple(self) -> tuple[str, str, str] | None:
         crit = self.conditionCriteria
-        if not isinstance(crit, MoneyV2CriteriaDC):
+        if not isinstance(crit, MoneyV2Criteria):
             return None
         op = self.operator
         if not isinstance(op, str):
@@ -109,7 +109,7 @@ class MethodCondition:
         if not isinstance(op, str) or crit is None:
             return None
         sym = ComparisonSymbol.get(op)
-        if isinstance(crit, WeightCriteriaDC):
+        if isinstance(crit, WeightCriteria):
             vdisp = Utils.to_float(crit.value)
             if vdisp is None:
                 return None
@@ -223,20 +223,20 @@ class MethodDefinition:
     id: str
     name: str | None = None
     methodConditions: list[MethodCondition] | None = None
-    rateProvider: DeliveryRateDefinitionDC | DeliveryParticipantDC | None = None
+    rateProvider: DeliveryRateDefinition | DeliveryParticipant | None = None
 
     def update_input_percent(self, factor: Decimal) -> MethodDefinitionInput | None:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinitionDC):
+        if isinstance(rp, DeliveryRateDefinition):
             amt = rp.price.amount
             cur = rp.price.currencyCode
             return MethodDefinitionInput(
                 id=self.id,
-                rateDefinition=DeliveryRateDefinitionInputDC(
+                rateDefinition=DeliveryRateDefinitionInput(
                     id=rp.id,
-                    price=MoneyInputDC(
+                    price=MoneyInput(
                         amount=Utils.scale_money(amt, factor),
                         currencyCode=cur,
                     ),
@@ -249,9 +249,9 @@ class MethodDefinition:
         cur = ff.currencyCode
         return MethodDefinitionInput(
             id=self.id,
-            participant=DeliveryParticipantInputDC(
+            participant=DeliveryParticipantInput(
                 id=rp.id,
-                fixedFee=MoneyInputDC(
+                fixedFee=MoneyInput(
                     amount=Utils.scale_money(amt, factor),
                     currencyCode=cur,
                 ),
@@ -262,15 +262,15 @@ class MethodDefinition:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinitionDC):
+        if isinstance(rp, DeliveryRateDefinition):
             amt = rp.price.amount
             cur = rp.price.currencyCode
             new_amt = Utils.offset_money(amt, delta)
             return MethodDefinitionInput(
                 id=self.id,
-                rateDefinition=DeliveryRateDefinitionInputDC(
+                rateDefinition=DeliveryRateDefinitionInput(
                     id=rp.id,
-                    price=MoneyInputDC(amount=new_amt, currencyCode=cur),
+                    price=MoneyInput(amount=new_amt, currencyCode=cur),
                 ),
             )
         ff = rp.fixedFee
@@ -281,9 +281,9 @@ class MethodDefinition:
         new_amt = Utils.offset_money(amt, delta)
         return MethodDefinitionInput(
             id=self.id,
-            participant=DeliveryParticipantInputDC(
+            participant=DeliveryParticipantInput(
                 id=rp.id,
-                fixedFee=MoneyInputDC(amount=new_amt, currencyCode=cur),
+                fixedFee=MoneyInput(amount=new_amt, currencyCode=cur),
             ),
         )
 
@@ -291,7 +291,7 @@ class MethodDefinition:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinitionDC):
+        if isinstance(rp, DeliveryRateDefinition):
             amt = rp.price.amount
             cur = rp.price.currencyCode
             new_amt = Utils.scale_money(amt, factor)
@@ -314,7 +314,7 @@ class MethodDefinition:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinitionDC):
+        if isinstance(rp, DeliveryRateDefinition):
             amt = rp.price.amount
             cur = rp.price.currencyCode
             new_amt = Utils.offset_money(amt, delta)
@@ -377,31 +377,31 @@ class MethodDefinition:
 
 
 @dataclass(config=_CONFIG)
-class ZoneRefDC:
+class ZoneRef:
     id: str
     name: str | None = None
 
 
 @dataclass(config=_CONFIG)
 class LocationGroupZone:
-    zone: ZoneRefDC
+    zone: ZoneRef
     methodDefinitions: Connection[MethodDefinition]
 
 
 @dataclass(config=_CONFIG)
-class ProfileLocationGroupZoneDC:
+class ProfileLocationGroupZone:
     locationGroup: DeliveryLocationGroup
     locationGroupZones: Connection[LocationGroupZone]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileZonesRootDC:
-    profileLocationGroups: list[ProfileLocationGroupZoneDC] | None = None
+class DeliveryProfileZonesRoot:
+    profileLocationGroups: list[ProfileLocationGroupZone] | None = None
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileQueryDataDC:
-    deliveryProfile: DeliveryProfileZonesRootDC | None = None
+class DeliveryProfileQueryData:
+    deliveryProfile: DeliveryProfileZonesRoot | None = None
 
 
 # --- Catalog row (aggregated in app, not a single GQL type) ---
@@ -459,7 +459,7 @@ class CatalogRowList(list[CatalogRow]):
 
 
 @dataclass(config=_CONFIG)
-class PreviewRateRowDC:
+class PreviewRateRow:
     id: str
     boundary: str
     current: str
@@ -467,24 +467,24 @@ class PreviewRateRowDC:
 
 
 @dataclass(config=_CONFIG)
-class PreviewZoneBlockDC:
+class PreviewZoneBlock:
     id: str
     name: str
-    rows: list[PreviewRateRowDC]
+    rows: list[PreviewRateRow]
 
 
 @dataclass(config=_CONFIG)
-class PreviewProfileBlockDC:
+class PreviewProfileBlock:
     id: str
     name: str
-    zones: list[PreviewZoneBlockDC]
+    zones: list[PreviewZoneBlock]
 
 
 # --- delivery_profile_update.gql: variables (DeliveryProfileInput & nested inputs) ---
 
 
 @dataclass(config=_CONFIG)
-class MoneyInputDC:
+class MoneyInput:
     """Shopify ``MoneyInput`` (amount + currency) for mutation variables."""
 
     amount: str
@@ -492,15 +492,15 @@ class MoneyInputDC:
 
 
 @dataclass(config=_CONFIG)
-class DeliveryRateDefinitionInputDC:
+class DeliveryRateDefinitionInput:
     id: str
-    price: MoneyInputDC
+    price: MoneyInput
 
 
 @dataclass(config=_CONFIG)
-class DeliveryParticipantInputDC:
+class DeliveryParticipantInput:
     id: str
-    fixedFee: MoneyInputDC
+    fixedFee: MoneyInput
 
 
 @dataclass(config=_CONFIG)
@@ -508,8 +508,8 @@ class MethodDefinitionInput:
     """``methodDefinitionsToUpdate`` entry (rate definition vs carrier participant)."""
 
     id: str
-    rateDefinition: DeliveryRateDefinitionInputDC | None = None
-    participant: DeliveryParticipantInputDC | None = None
+    rateDefinition: DeliveryRateDefinitionInput | None = None
+    participant: DeliveryParticipantInput | None = None
 
 
 class MethodDefinitionInputsByZone(defaultdict[str, list[MethodDefinitionInput]]):
@@ -518,7 +518,7 @@ class MethodDefinitionInputsByZone(defaultdict[str, list[MethodDefinitionInput]]
     def __init__(self) -> None:
         super().__init__(list)
 
-    def update_batches(self, mutation_cap: int) -> list[list[ZoneUpdateInputDC]]:
+    def update_batches(self, mutation_cap: int) -> list[list[ZoneUpdateInput]]:
         """
         Split zone → method update inputs into several GraphQL mutations.
 
@@ -530,8 +530,8 @@ class MethodDefinitionInputsByZone(defaultdict[str, list[MethodDefinitionInput]]
         for zone_id, methods in self.items():
             for chunk in Utils.chunks(methods, mutation_cap):
                 pieces.append((zone_id, chunk))
-        batches: list[list[ZoneUpdateInputDC]] = []
-        cur: list[ZoneUpdateInputDC] = []
+        batches: list[list[ZoneUpdateInput]] = []
+        cur: list[ZoneUpdateInput] = []
         cur_total = 0
         for zid, mets in pieces:
             n = len(mets)
@@ -540,7 +540,7 @@ class MethodDefinitionInputsByZone(defaultdict[str, list[MethodDefinitionInput]]
                 cur = []
                 cur_total = 0
             cur.append(
-                ZoneUpdateInputDC(id=zid, methodDefinitionsToUpdate=mets)
+                ZoneUpdateInput(id=zid, methodDefinitionsToUpdate=mets)
             )
             cur_total += n
         if cur:
@@ -607,44 +607,44 @@ class MethodDefinitionInputsByProfile(defaultdict[str, MethodDefinitionInputsByL
 
 
 @dataclass(config=_CONFIG)
-class ZoneUpdateInputDC:
+class ZoneUpdateInput:
     id: str
     methodDefinitionsToUpdate: list[MethodDefinitionInput]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileLocationGroupInputDC:
+class DeliveryProfileLocationGroupInput:
     id: str
-    zonesToUpdate: list[ZoneUpdateInputDC]
+    zonesToUpdate: list[ZoneUpdateInput]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileInputDC:
-    locationGroupsToUpdate: list[DeliveryProfileLocationGroupInputDC]
+class DeliveryProfileInput:
+    locationGroupsToUpdate: list[DeliveryProfileLocationGroupInput]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileUpdateVariablesDC(Jsonable):
+class DeliveryProfileUpdateVariables(Jsonable):
     """Variables for ``DeliveryProfileUpdate`` (``$id``, ``$profile``)."""
 
     id: str
-    profile: DeliveryProfileInputDC
+    profile: DeliveryProfileInput
 
 
 # --- delivery_profile_update.gql: response ---
 
 
 @dataclass(config=_CONFIG)
-class UserErrorDC:
+class UserError:
     field: list[str] | None = None
     message: str | None = None
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileUpdatePayloadDC:
-    userErrors: list[UserErrorDC]
+class DeliveryProfileUpdatePayload:
+    userErrors: list[UserError]
 
 
 @dataclass(config=_CONFIG)
-class DeliveryProfileUpdateDataDC:
-    deliveryProfileUpdate: DeliveryProfileUpdatePayloadDC | None = None
+class DeliveryProfileUpdateData:
+    deliveryProfileUpdate: DeliveryProfileUpdatePayload | None = None
