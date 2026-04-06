@@ -207,6 +207,43 @@
     color: #065f46;
 }
 
+.shipping-rates__status-log {
+    margin: 0.75rem 0 0;
+    max-height: 14rem;
+    overflow-y: auto;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    background: #fafafa;
+}
+
+.shipping-rates__status-log-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.35rem 0;
+}
+
+.shipping-rates__status-log-item {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.shipping-rates__status-log-item:last-child {
+    border-bottom: none;
+}
+
+.shipping-rates__status-log-time {
+    display: block;
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+    color: #64748b;
+    margin-bottom: 0.35rem;
+}
+
+.shipping-rates__status-log-msg {
+    margin: 0;
+}
+
 .shipping-rates__list-hint {
     font-size: 0.8125rem;
     color: #6b7280;

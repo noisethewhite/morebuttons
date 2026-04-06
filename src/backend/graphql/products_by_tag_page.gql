@@ -1,0 +1,29 @@
+query ProductsByTagPage($first: Int!, $after: String, $query: String!) {
+  shop {
+    currencyCode
+  }
+  products(first: $first, after: $after, query: $query) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      node {
+        id
+        title
+        variants(first: 100) {
+          pageInfo {
+            hasNextPage
+          }
+          edges {
+            node {
+              id
+              title
+              price
+            }
+          }
+        }
+      }
+    }
+  }
+}

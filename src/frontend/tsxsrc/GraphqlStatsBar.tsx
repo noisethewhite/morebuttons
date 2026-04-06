@@ -1,6 +1,10 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import AppBridge from "../tssrc/app_bridge"
-import { setGraphqlHeaderListener } from "../tssrc/graphql_fetch_interceptor"
+import {
+    clearGraphqlPhase,
+    setGraphqlHeaderListener,
+    setGraphqlPhaseListener,
+} from "../tssrc/graphql_fetch_interceptor"
 
 const COOLDOWN_MS = 2000
 
@@ -19,6 +23,8 @@ export default function GraphqlStatsBar(): ReactNode {
     const [allowMutations, setAllowMutations] = useState(false)
     const [switchLoading, setSwitchLoading] = useState(true)
     const [switchError, setSwitchError] = useState<string | null>(null)
+    const [phaseDone, setPhaseDone] = useState(0)
+    const [phaseTotal, setPhaseTotal] = useState(0)
     const deltaQRef = useRef(0)
     const deltaMRef = useRef(0)
     const qTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -150,6 +156,22 @@ export default function GraphqlStatsBar(): ReactNode {
         }
     }, [])
 
+    useEffect(() => {
+        const onPhase = (done: number, total: number) => {
+            setPhaseDone(done)
+            setPhaseTotal(total)
+        }
+        setGraphqlPhaseListener(onPhase)
+        return () => {
+            setGraphqlPhaseListener(null)
+            clearGraphqlPhase()
+        }
+    }, [])
+
+    const phasePct =
+        phaseTotal > 0 ? Math.min(100, Math.round((100 * phaseDone) / phaseTotal)) : 0
+    const showPhase = phaseTotal > 0
+
     return (
         <div className="graphql-stats" aria-label="GraphQL operation counts">
             <div className="graphql-stats__main">
@@ -202,6 +224,30 @@ export default function GraphqlStatsBar(): ReactNode {
                         </span>
                     </span>
                 </div>
+                {showPhase ? (
+                    <div
+                        className="graphql-stats__phase"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={phaseTotal}
+                        aria-valuenow={phaseDone}
+                        aria-label="Catalog loading progress"
+                    >
+                        <div className="graphql-stats__phase-label">
+                            <span>Catalog sync (GraphQL steps)</span>
+                            <span className="graphql-stats__phase-count">
+                                {Math.max(0, phaseTotal - phaseDone)} left · {phaseDone}/
+                                {phaseTotal}
+                            </span>
+                        </div>
+                        <div className="graphql-stats__phase-track">
+                            <div
+                                className="graphql-stats__phase-fill"
+                                style={{ width: `${phasePct}%` }}
+                            />
+                        </div>
+                    </div>
+                ) : null}
             </div>
             <div className="graphql-stats__controls">
                 <label className="graphql-stats__switch-label">

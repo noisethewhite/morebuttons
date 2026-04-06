@@ -1,4 +1,18 @@
 from .common import Connection, Edge, PageInfo
+from .products import (
+    ProductListNode,
+    ProductTagCatalogStepDone,
+    ProductTagCatalogStepPending,
+    ProductTagCatalogStepResult,
+    ProductTagsQueryData,
+    ProductVariantNode,
+    ProductVariantsBulkInputRow,
+    ProductVariantsBulkUpdateData,
+    ProductVariantsBulkUpdatePayload,
+    ProductVariantsBulkUpdateVariables,
+    ProductsByTagQueryData,
+    TaggedVariantRow,
+)
 from .shipping import (
     CatalogRow,
     CatalogRowList,
@@ -20,11 +34,24 @@ from .shipping import (
     PreviewProfileBlock,
     PreviewRateRow,
     PreviewZoneBlock,
+    ShippingFilters,
     WeightCriteria,
     ZoneUpdateInput,
 )
 
 __all__ = [
+    "ProductListNode",
+    "ProductTagCatalogStepDone",
+    "ProductTagCatalogStepPending",
+    "ProductTagCatalogStepResult",
+    "ProductTagsQueryData",
+    "ProductVariantNode",
+    "ProductVariantsBulkInputRow",
+    "ProductVariantsBulkUpdateData",
+    "ProductVariantsBulkUpdatePayload",
+    "ProductVariantsBulkUpdateVariables",
+    "ProductsByTagQueryData",
+    "TaggedVariantRow",
     "CatalogRow",
     "CatalogRowList",
     "Connection",
@@ -48,6 +75,7 @@ __all__ = [
     "PreviewProfileBlock",
     "PreviewRateRow",
     "PreviewZoneBlock",
+    "ShippingFilters",
     "WeightCriteria",
     "ZoneUpdateInput",
 ]

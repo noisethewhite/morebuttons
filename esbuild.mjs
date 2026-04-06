@@ -23,6 +23,10 @@ esbuild.build({
         "dist/graphql-stats.css"
     )
     fs.copyFileSync(
+        "src/frontend/styles/app-tabs.css",
+        "dist/app-tabs.css"
+    )
+    fs.copyFileSync(
         "src/frontend/styles/shipping-rates.css",
         "dist/shipping-rates.css"
     )

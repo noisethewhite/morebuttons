@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal
 
+from .catalog_cache import get_shipping_catalog, invalidate_shipping_catalog
 from .fileloader import FileLoader
 from .graphql import GraphQL
 from .graphqldc.shipping import (
@@ -166,8 +167,39 @@ def preview_rate_changes(
     """
     Returns (profiles, warnings) where each profile has
     id, name, zones: [{ id, name, rows: [{ id, boundary, current, new }] }].
+
+    Uses the in-memory shipping catalog loaded by the catalog job (no extra
+    GraphQL). ``access_token`` is unused but kept for API compatibility.
     """
-    rows, warnings = collect_methods_and_warnings(shop_domain, access_token)
+    cached = get_shipping_catalog(shop_domain)
+    if cached is None:
+        raise RuntimeError(
+            "Shipping catalog is not loaded yet. Wait for the loading progress to finish."
+        )
+    rows, warnings = cached
+    return preview_rate_changes_from_rows(
+        rows,
+        warnings,
+        rate_name,
+        percent,
+        profile_id,
+        zone_id,
+        adjustment_mode,
+    )
+
+
+def preview_rate_changes_from_rows(
+    rows: CatalogRowList,
+    warnings: list[str],
+    rate_name: str,
+    percent: float,
+    profile_id: str | None = None,
+    zone_id: str | None = None,
+    adjustment_mode: Literal["percent", "offset"] = "percent",
+) -> tuple[list[PreviewProfileBlock], list[str]]:
+    """
+    Pure CPU preview from an already-fetched :class:`CatalogRowList`.
+    """
     factor: Decimal | None = None
     amount_delta: Decimal | None = None
     if adjustment_mode == "percent":
@@ -176,6 +208,7 @@ def preview_rate_changes(
         amount_delta = Decimal(str(percent))
 
     acc: dict[str, _PreviewProfileAccum] = {}
+    w = list(warnings)
 
     for row in rows:
         if not row.matches_profile_zone(profile_id, zone_id):
@@ -234,7 +267,7 @@ def preview_rate_changes(
             PreviewProfileBlock(id=pid, name=pa.name, zones=zones_out)
         )
 
-    return out, warnings
+    return out, w
 
 
 def adjust_rates_by_name_percent(
@@ -248,8 +281,14 @@ def adjust_rates_by_name_percent(
 ) -> tuple[int, list[str], list[str]]:
     """
     Returns (updated_method_count, warnings, user_error_messages).
+    Uses cached catalog rows from the shipping load job.
     """
-    rows, warnings = collect_methods_and_warnings(shop_domain, access_token)
+    cached = get_shipping_catalog(shop_domain)
+    if cached is None:
+        raise RuntimeError(
+            "Shipping catalog is not loaded. Reload shipping data before applying changes."
+        )
+    rows, warnings = cached
     by_profile = MethodDefinitionInputsByProfile()
     updated, warnings = by_profile.update_by_name_percent(
         rows, warnings, rate_name, percent, profile_id, zone_id, adjustment_mode
@@ -295,4 +334,5 @@ def adjust_rates_by_name_percent(
                     if isinstance(msg, str):
                         user_msgs.append(msg)
 
+    invalidate_shipping_catalog(shop_domain)
     return updated, warnings, user_msgs

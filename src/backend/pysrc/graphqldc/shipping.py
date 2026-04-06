@@ -1,20 +1,17 @@
 from __future__ import annotations
 from collections import defaultdict
-from typing import Literal, cast
+from typing import Callable, Literal
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 from decimal import Decimal
 
-from backend.pysrc.web_types import Json
 from .common import Connection, Jsonable
 from ..utils import Utils
 from ..symbols import ComparisonSymbol, Currency
 
 
 _CONFIG = ConfigDict(extra="ignore")
-
-
 # --- delivery_profiles_page.gql ---
 
 
@@ -120,6 +117,10 @@ class MethodCondition:
 
 
 class MethodConditionList(list[MethodCondition]):
+    def _joined_fallback_conditions(self) -> str | None:
+        parts = [s for c in self if (s := c.format_condition()) is not None]
+        return "; ".join(parts) or None
+
     def format_weight_segment(self) -> str | None:
         parsed: list[tuple[str, float, str]] = []
         for c in self:
@@ -130,11 +131,7 @@ class MethodConditionList(list[MethodCondition]):
             return None
         units = {u for _, _, u in parsed}
         if len(units) != 1:
-            return "; ".join(
-                s
-                for c in self
-                if (s := c.format_condition()) is not None
-            ) or None
+            return self._joined_fallback_conditions()
         unit = next(iter(units))
         label = Utils.weight_unit_label(unit)
         low_ops = frozenset({"GREATER_THAN_OR_EQUAL_TO", "GREATER_THAN"})
@@ -177,11 +174,7 @@ class MethodConditionList(list[MethodCondition]):
             return None
         currencies = {c for _, _, c in parsed}
         if len(currencies) != 1:
-            return "; ".join(
-                s
-                for c in self
-                if (s := c.format_condition()) is not None
-            ) or None
+            return self._joined_fallback_conditions()
         cur = next(iter(currencies))
         low_ops = frozenset({"GREATER_THAN_OR_EQUAL_TO", "GREATER_THAN"})
         high_ops = frozenset({"LESS_THAN_OR_EQUAL_TO", "LESS_THAN"})
@@ -229,109 +222,29 @@ class MethodDefinition:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinition):
-            amt = rp.price.amount
-            cur = rp.price.currencyCode
-            return MethodDefinitionInput(
-                id=self.id,
-                rateDefinition=DeliveryRateDefinitionInput(
-                    id=rp.id,
-                    price=MoneyInput(
-                        amount=Utils.scale_money(amt, factor),
-                        currencyCode=cur,
-                    ),
-                ),
-            )
-        ff = rp.fixedFee
-        if ff is None:
-            return None
-        amt = ff.amount
-        cur = ff.currencyCode
-        return MethodDefinitionInput(
-            id=self.id,
-            participant=DeliveryParticipantInput(
-                id=rp.id,
-                fixedFee=MoneyInput(
-                    amount=Utils.scale_money(amt, factor),
-                    currencyCode=cur,
-                ),
-            ),
+        return _method_definition_input_transformed(
+            self.id, rp, lambda a: Utils.scale_money(a, factor)
         )
 
     def update_input_offset(self, delta: Decimal) -> MethodDefinitionInput | None:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinition):
-            amt = rp.price.amount
-            cur = rp.price.currencyCode
-            new_amt = Utils.offset_money(amt, delta)
-            return MethodDefinitionInput(
-                id=self.id,
-                rateDefinition=DeliveryRateDefinitionInput(
-                    id=rp.id,
-                    price=MoneyInput(amount=new_amt, currencyCode=cur),
-                ),
-            )
-        ff = rp.fixedFee
-        if ff is None:
-            return None
-        amt = ff.amount
-        cur = ff.currencyCode
-        new_amt = Utils.offset_money(amt, delta)
-        return MethodDefinitionInput(
-            id=self.id,
-            participant=DeliveryParticipantInput(
-                id=rp.id,
-                fixedFee=MoneyInput(amount=new_amt, currencyCode=cur),
-            ),
+        return _method_definition_input_transformed(
+            self.id, rp, lambda a: Utils.offset_money(a, delta)
         )
 
     def price_pair_percent(self, factor: Decimal) -> tuple[str, str] | None:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinition):
-            amt = rp.price.amount
-            cur = rp.price.currencyCode
-            new_amt = Utils.scale_money(amt, factor)
-            return (
-                Currency.format_amount(amt, cur),
-                Currency.format_amount(new_amt, cur),
-            )
-        ff = rp.fixedFee
-        if ff is None:
-            return None
-        amt = ff.amount
-        cur = ff.currencyCode
-        new_amt = Utils.scale_money(amt, factor)
-        return (
-            Currency.format_amount(amt, cur),
-            Currency.format_amount(new_amt, cur),
-        )
+        return _format_price_pair(rp, lambda a: Utils.scale_money(a, factor))
 
     def price_pair_offset(self, delta: Decimal) -> tuple[str, str] | None:
         rp = self.rateProvider
         if rp is None:
             return None
-        if isinstance(rp, DeliveryRateDefinition):
-            amt = rp.price.amount
-            cur = rp.price.currencyCode
-            new_amt = Utils.offset_money(amt, delta)
-            return (
-                Currency.format_amount(amt, cur),
-                Currency.format_amount(new_amt, cur),
-            )
-        ff = rp.fixedFee
-        if ff is None:
-            return None
-        amt = ff.amount
-        cur = ff.currencyCode
-        new_amt = Utils.offset_money(amt, delta)
-        return (
-            Currency.format_amount(amt, cur),
-            Currency.format_amount(new_amt, cur),
-        )
+        return _format_price_pair(rp, lambda a: Utils.offset_money(a, delta))
 
     def format_boundary(self) -> str:
         mcs = self.methodConditions
@@ -404,6 +317,23 @@ class DeliveryProfileQueryData:
     deliveryProfile: DeliveryProfileZonesRoot | None = None
 
 
+# --- /shipping-rate-names filter dropdowns (JSON via :class:`Jsonable`) ---
+
+
+class ShippingFilters:
+    """Grouped shapes for profile/zone filter options in the shipping UI."""
+
+    @dataclass(config=_CONFIG)
+    class Option:
+        id: str
+        name: str
+
+    @dataclass(config=_CONFIG)
+    class ByProfileResponse(Jsonable):
+        profiles: list[ShippingFilters.Option]
+        zonesByProfile: dict[str, list[ShippingFilters.Option]]
+
+
 # --- Catalog row (aggregated in app, not a single GQL type) ---
 
 
@@ -433,7 +363,7 @@ class CatalogRowList(list[CatalogRow]):
                 names.add(n)
         return sorted(names)
 
-    def build_delivery_profile_filters(self) -> tuple[list[Json.Object], Json.Object]:
+    def build_delivery_profile_filters(self) -> ShippingFilters.ByProfileResponse:
         """Unique delivery profiles and zones per profile (for filter dropdowns)."""
         profiles_map: dict[str, str] = {}
         zones_by_profile: dict[str, dict[str, str]] = defaultdict(dict)
@@ -441,18 +371,19 @@ class CatalogRowList(list[CatalogRow]):
             profiles_map[row.profileId] = row.profileName
             zones_by_profile[row.profileId][row.zoneId] = row.zoneName
         profiles = [
-            {"id": k, "name": v}
+            ShippingFilters.Option(id=k, name=v)
             for k, v in sorted(profiles_map.items(), key=lambda x: (x[1].lower(), x[0]))
         ]
-        zones_out: Json.Object = {}
+        zones_out: dict[str, list[ShippingFilters.Option]] = {}
         for pid in sorted(zones_by_profile.keys()):
             zd = zones_by_profile[pid]
-            zones_list = [
-                {"id": zid, "name": zd[zid]}
+            zones_out[pid] = [
+                ShippingFilters.Option(id=zid, name=zd[zid])
                 for zid in sorted(zd.keys(), key=lambda z: (zd[z].lower(), z))
             ]
-            zones_out[pid] = cast(list[Json.Value], zones_list)
-        return cast(list[Json.Object], profiles), zones_out
+        return ShippingFilters.ByProfileResponse(
+            profiles=profiles, zonesByProfile=zones_out
+        )
 
 
 # --- Preview API (computed in app, matches JSON shape for /shipping-rates/preview) ---
@@ -510,6 +441,67 @@ class MethodDefinitionInput:
     id: str
     rateDefinition: DeliveryRateDefinitionInput | None = None
     participant: DeliveryParticipantInput | None = None
+
+
+def _method_definition_input_with_amount(
+    method_id: str,
+    rp: DeliveryRateDefinition | DeliveryParticipant,
+    new_amount: str,
+) -> MethodDefinitionInput:
+    if isinstance(rp, DeliveryRateDefinition):
+        return MethodDefinitionInput(
+            id=method_id,
+            rateDefinition=DeliveryRateDefinitionInput(
+                id=rp.id,
+                price=MoneyInput(amount=new_amount, currencyCode=rp.price.currencyCode),
+            ),
+        )
+    ff = rp.fixedFee
+    assert ff is not None
+    return MethodDefinitionInput(
+        id=method_id,
+        participant=DeliveryParticipantInput(
+            id=rp.id,
+            fixedFee=MoneyInput(amount=new_amount, currencyCode=ff.currencyCode),
+        ),
+    )
+
+
+def _method_definition_input_transformed(
+    method_id: str,
+    rp: DeliveryRateDefinition | DeliveryParticipant,
+    transform: Callable[[str], str],
+) -> MethodDefinitionInput | None:
+    if isinstance(rp, DeliveryRateDefinition):
+        return _method_definition_input_with_amount(
+            method_id, rp, transform(rp.price.amount)
+        )
+    ff = rp.fixedFee
+    if ff is None:
+        return None
+    return _method_definition_input_with_amount(
+        method_id, rp, transform(ff.amount)
+    )
+
+
+def _format_price_pair(
+    rp: DeliveryRateDefinition | DeliveryParticipant,
+    transform: Callable[[str], str],
+) -> tuple[str, str] | None:
+    if isinstance(rp, DeliveryRateDefinition):
+        amt, cur = rp.price.amount, rp.price.currencyCode
+        return (
+            Currency.format_amount(amt, cur),
+            Currency.format_amount(transform(amt), cur),
+        )
+    ff = rp.fixedFee
+    if ff is None:
+        return None
+    amt, cur = ff.amount, ff.currencyCode
+    return (
+        Currency.format_amount(amt, cur),
+        Currency.format_amount(transform(amt), cur),
+    )
 
 
 class MethodDefinitionInputsByZone(defaultdict[str, list[MethodDefinitionInput]]):

@@ -10,32 +10,6 @@ import AppBridge from "../tssrc/app_bridge"
 import { runSteppedCatalogJob } from "../tssrc/catalog_job"
 import StatusMessageLog, { useStatusMessageLog } from "./status_message_log"
 
-interface FilterProfile {
-    id: string
-    name: string
-}
-
-interface FilterZone {
-    id: string
-    name: string
-}
-
-interface NamesResponse {
-    names: string[]
-    profiles?: FilterProfile[]
-    zonesByProfile?: Record<string, FilterZone[]>
-    warnings?: string[]
-    error?: string
-}
-
-interface AdjustResponse {
-    updated: number
-    warnings: string[]
-    userErrors: string[]
-    error?: string
-    code?: string
-}
-
 interface PreviewRow {
     id: string
     boundary: string
@@ -61,10 +35,19 @@ interface PreviewResponse {
     error?: string
 }
 
-/**
- * Read JSON from a fetch Response. Returns null if the body is empty, looks like HTML
- * (e.g. proxy error page), or is not valid JSON — avoids SyntaxError from res.json().
- */
+interface TagsResponse {
+    tags?: string[]
+    error?: string
+}
+
+interface AdjustResponse {
+    updated: number
+    warnings: string[]
+    userErrors: string[]
+    error?: string
+    code?: string
+}
+
 async function readJsonBody<T>(res: Response): Promise<T | null> {
     const text = await res.text()
     const trimmed = text.trimStart()
@@ -78,7 +61,6 @@ async function readJsonBody<T>(res: Response): Promise<T | null> {
     }
 }
 
-/** Compare first amount in strings like "12.00 €" or "$14.60". */
 function priceChangeKind(current: string, next: string): "up" | "down" | "same" {
     const parseAmount = (s: string): number | null => {
         const m = s.match(/[\d]+(?:[.,]\d+)?/)
@@ -102,75 +84,111 @@ function priceChangeKind(current: string, next: string): "up" | "down" | "same" 
     return "same"
 }
 
-const ALL_VALUE = ""
-
 type AdjustmentMode = "percent" | "offset"
 
-export default function ShippingRatesPanel(): ReactNode {
-    const [names, setNames] = useState<string[]>([])
-    const [profiles, setProfiles] = useState<FilterProfile[]>([])
-    const [zonesByProfile, setZonesByProfile] = useState<Record<string, FilterZone[]>>(
-        {}
-    )
-    const [selected, setSelected] = useState("")
-    const [profileId, setProfileId] = useState(ALL_VALUE)
-    const [zoneId, setZoneId] = useState(ALL_VALUE)
+export default function ProductTagPricingPanel(): ReactNode {
+    const [tags, setTags] = useState<string[]>([])
+    const [selectedTag, setSelectedTag] = useState("")
     const [adjustmentMode, setAdjustmentMode] = useState<AdjustmentMode>("percent")
     const [percent, setPercent] = useState("")
-    const [loadingNames, setLoadingNames] = useState(true)
+    const [loadingTags, setLoadingTags] = useState(true)
+    const [loadingCatalog, setLoadingCatalog] = useState(false)
     const [submitting, setSubmitting] = useState(false)
     const [pendingConfirmation, setPendingConfirmation] = useState(false)
     const [preview, setPreview] = useState<PreviewProfile[] | null>(null)
     const [previewLoading, setPreviewLoading] = useState(false)
     const [previewError, setPreviewError] = useState<string | null>(null)
     const [previewWarnings, setPreviewWarnings] = useState<string | null>(null)
+    const [variantCount, setVariantCount] = useState<number | null>(null)
     const { entries: statusLog, push: pushStatus } = useStatusMessageLog()
 
-    const loadCatalog = useCallback(async () => {
-        setLoadingNames(true)
+    useEffect(() => {
+        let cancelled = false
+        ;(async () => {
+            setLoadingTags(true)
+            try {
+                const res = await AppBridge.fetchWithToken("/api/product-tags")
+                const data = await readJsonBody<TagsResponse>(res)
+                if (cancelled) {
+                    return
+                }
+                if (!res.ok || !data) {
+                    pushStatus(
+                        "err",
+                        data?.error ?? `Failed to load tags (${res.status}).`,
+                    )
+                    setTags([])
+                    return
+                }
+                setTags(data.tags ?? [])
+            } catch {
+                if (!cancelled) {
+                    pushStatus("err", "Could not load product tags.")
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoadingTags(false)
+                }
+            }
+        })()
+        return () => {
+            cancelled = true
+        }
+    }, [pushStatus])
+
+    const loadTagCatalog = useCallback(async (tag: string) => {
+        if (!tag.trim()) {
+            setVariantCount(null)
+            return
+        }
+        setLoadingCatalog(true)
+        setVariantCount(null)
         try {
             const result = await runSteppedCatalogJob(
-                "/api/shipping-catalog/start",
-                "/api/shipping-catalog/step",
-                {}
+                "/api/product-tag-catalog/start",
+                "/api/product-tag-catalog/step",
+                { tag: tag.trim() }
             )
-            const data = result as unknown as NamesResponse
-            const n = data.names ?? []
-            setNames(n)
-            setSelected(n[0] ?? "")
-            setProfiles(data.profiles ?? [])
-            setZonesByProfile(data.zonesByProfile ?? {})
-            setProfileId(ALL_VALUE)
-            setZoneId(ALL_VALUE)
-            if (data.warnings?.length) {
+            const vc = result.variantCount
+            setVariantCount(typeof vc === "number" ? vc : 0)
+            const w = result.warnings
+            if (Array.isArray(w) && w.length) {
                 pushStatus(
                     "ok",
-                    `Loaded names. Notes: ${data.warnings.join(" ")}`,
+                    `Loaded variants. Notes: ${(w as string[]).join(" ")}`,
                 )
             }
         } catch (e) {
             pushStatus(
                 "err",
-                e instanceof Error
-                    ? e.message
-                    : "Could not load shipping rate names.",
+                e instanceof Error ? e.message : "Could not load tagged products.",
             )
-            setNames([])
+            setVariantCount(null)
         } finally {
-            setLoadingNames(false)
+            setLoadingCatalog(false)
         }
     }, [pushStatus])
 
     useEffect(() => {
-        void loadCatalog()
-    }, [loadCatalog])
+        if (!selectedTag.trim()) {
+            setPreview(null)
+            setVariantCount(null)
+            return
+        }
+        void loadTagCatalog(selectedTag)
+    }, [selectedTag, loadTagCatalog])
 
     useEffect(() => {
         if (pendingConfirmation) {
             return
         }
+        if (loadingCatalog) {
+            setPreviewLoading(false)
+            return
+        }
         const p = percent.trim()
-        if (!selected || p === "" || Number.isNaN(Number(p))) {
+        const tag = selectedTag.trim()
+        if (!tag || p === "" || Number.isNaN(Number(p))) {
             setPreview(null)
             setPreviewError(null)
             setPreviewWarnings(null)
@@ -185,20 +203,14 @@ export default function ShippingRatesPanel(): ReactNode {
                 setPreviewWarnings(null)
                 try {
                     const q = new URLSearchParams({
-                        name: selected,
+                        tag,
                         percent: p,
                     })
                     if (adjustmentMode === "offset") {
                         q.set("mode", "offset")
                     }
-                    if (profileId) {
-                        q.set("profileId", profileId)
-                    }
-                    if (zoneId) {
-                        q.set("zoneId", zoneId)
-                    }
                     const res = await AppBridge.fetchWithToken(
-                        `/api/shipping-rates/preview?${q.toString()}`
+                        `/api/product-tag-pricing/preview?${q.toString()}`
                     )
                     const data = await readJsonBody<PreviewResponse>(res)
                     if (cancelled) {
@@ -206,9 +218,7 @@ export default function ShippingRatesPanel(): ReactNode {
                     }
                     if (!res.ok) {
                         setPreview(null)
-                        setPreviewError(
-                            data?.error ?? `Preview failed (${res.status}).`
-                        )
+                        setPreviewError(data?.error ?? `Preview failed (${res.status}).`)
                         return
                     }
                     if (!data) {
@@ -238,34 +248,13 @@ export default function ShippingRatesPanel(): ReactNode {
             cancelled = true
             window.clearTimeout(handle)
         }
-    }, [selected, percent, profileId, zoneId, pendingConfirmation, adjustmentMode])
-
-    const zoneOptions: FilterZone[] = useMemo(() => {
-        if (profileId) {
-            return zonesByProfile[profileId] ?? []
-        }
-        const seen = new Set<string>()
-        const out: FilterZone[] = []
-        for (const p of profiles) {
-            for (const z of zonesByProfile[p.id] ?? []) {
-                if (!seen.has(z.id)) {
-                    seen.add(z.id)
-                    out.push(z)
-                }
-            }
-        }
-        return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
-    }, [profileId, profiles, zonesByProfile])
-
-    function onProfileChange(value: string): void {
-        setProfileId(value)
-        setZoneId(ALL_VALUE)
-    }
+    }, [selectedTag, percent, pendingConfirmation, adjustmentMode, loadingCatalog])
 
     const onSubmitSet: SubmitEventHandler<HTMLFormElement> = (e) => {
         e.preventDefault()
-        if (!selected.trim()) {
-            pushStatus("err", "Choose a rate name.")
+        const tag = selectedTag.trim()
+        if (!tag) {
+            pushStatus("err", "Choose a product tag.")
             return
         }
         const p = percent.trim()
@@ -285,7 +274,7 @@ export default function ShippingRatesPanel(): ReactNode {
         if (!preview || preview.length === 0) {
             pushStatus(
                 "err",
-                "No rates match this adjustment. Change the name or percent first.",
+                "No variants match this adjustment. Change the tag or value first.",
             )
             return
         }
@@ -293,21 +282,20 @@ export default function ShippingRatesPanel(): ReactNode {
     }
 
     async function onConfirm(): Promise<void> {
+        const tag = selectedTag.trim()
         const p = percent.trim()
-        if (!selected.trim() || p === "" || Number.isNaN(Number(p))) {
+        if (!tag || p === "" || Number.isNaN(Number(p))) {
             return
         }
         setSubmitting(true)
         try {
-            const res = await AppBridge.fetchWithToken("/api/shipping-rates/adjust", {
+            const res = await AppBridge.fetchWithToken("/api/product-tag-pricing/adjust", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    name: selected,
+                    tag,
                     percent: Number(p),
                     ...(adjustmentMode === "offset" ? { mode: "offset" } : {}),
-                    ...(profileId ? { profileId } : {}),
-                    ...(zoneId ? { zoneId } : {}),
                 }),
             })
             const data = await readJsonBody<AdjustResponse>(res)
@@ -328,7 +316,9 @@ export default function ShippingRatesPanel(): ReactNode {
                 )
                 return
             }
-            const parts: string[] = [`Updated ${data.updated} rate${data.updated === 1 ? "" : "s"}.`]
+            const parts: string[] = [
+                `Updated ${data.updated} variant${data.updated === 1 ? "" : "s"}.`,
+            ]
             if (data.userErrors?.length) {
                 parts.push(`Shopify: ${data.userErrors.join("; ")}`)
             }
@@ -340,20 +330,14 @@ export default function ShippingRatesPanel(): ReactNode {
                 (data.updated === 0 && (data.userErrors?.length ?? 0) > 0)
             pushStatus(hasErr ? "err" : "ok", parts.join(" "))
             setPendingConfirmation(false)
-            await loadCatalog()
-            const q = new URLSearchParams({ name: selected, percent: p })
+            await loadTagCatalog(tag)
+            const q = new URLSearchParams({ tag, percent: p })
             if (adjustmentMode === "offset") {
                 q.set("mode", "offset")
             }
-            if (profileId) {
-                q.set("profileId", profileId)
-            }
-            if (zoneId) {
-                q.set("zoneId", zoneId)
-            }
             try {
                 const prevRes = await AppBridge.fetchWithToken(
-                    `/api/shipping-rates/preview?${q.toString()}`
+                    `/api/product-tag-pricing/preview?${q.toString()}`
                 )
                 const prevJson = await readJsonBody<PreviewResponse>(prevRes)
                 if (prevRes.ok && prevJson?.profiles) {
@@ -362,23 +346,9 @@ export default function ShippingRatesPanel(): ReactNode {
                         prevJson.warnings?.length ? prevJson.warnings.join(" ") : null
                     )
                     setPreviewError(null)
-                } else if (prevRes.ok && !prevJson) {
-                    console.warn(
-                        "Preview refresh after adjust: response was not JSON (e.g. HTML error page)."
-                    )
-                    setPreviewError(
-                        "Could not refresh preview after applying; try nudging the percent to reload."
-                    )
-                } else if (!prevRes.ok) {
-                    setPreviewError(
-                        prevJson?.error ?? `Preview failed (${prevRes.status}).`
-                    )
                 }
-            } catch (previewErr) {
-                console.warn("Preview refresh after adjust failed:", previewErr)
-                setPreviewError(
-                    "Could not refresh preview after applying; try nudging the percent to reload."
-                )
+            } catch {
+                setPreviewError("Could not refresh preview after applying.")
             }
         } catch (error) {
             console.error(error)
@@ -392,21 +362,33 @@ export default function ShippingRatesPanel(): ReactNode {
         setPendingConfirmation(false)
     }
 
-    const busy = loadingNames || submitting
+    const busy = loadingTags || loadingCatalog || submitting
     const pTrim = percent.trim()
     const previewReady =
-        Boolean(selected) && pTrim !== "" && !Number.isNaN(Number(pTrim))
+        Boolean(selectedTag.trim()) && pTrim !== "" && !Number.isNaN(Number(pTrim))
     const controlsLocked = pendingConfirmation
+    const catalogReadyForTag = !selectedTag.trim() || variantCount !== null
     const canSet =
         previewReady &&
         !previewLoading &&
         Boolean(preview?.length) &&
-        !pendingConfirmation
+        !pendingConfirmation &&
+        catalogReadyForTag
+
+    const tagHint = useMemo(() => {
+        if (loadingTags) {
+            return "Loading tags…"
+        }
+        if (tags.length === 0) {
+            return "No product tags found in this shop (or tags could not be loaded)."
+        }
+        return "Prices apply to every variant on products with this tag."
+    }, [loadingTags, tags.length])
 
     return (
-        <section className="shipping-rates" aria-labelledby="shipping-rates-heading">
-            <h2 id="shipping-rates-heading" className="shipping-rates__title">
-                Adjust shipping rates by name
+        <section className="shipping-rates" aria-labelledby="product-tag-heading">
+            <h2 id="product-tag-heading" className="shipping-rates__title">
+                Adjust variant prices by product tag
             </h2>
             <div className="shipping-rates__layout">
                 <div
@@ -422,63 +404,21 @@ export default function ShippingRatesPanel(): ReactNode {
                             Review the preview and confirm or revert to continue editing.
                         </p>
                     ) : null}
-                    {loadingNames ? (
-                        <p className="shipping-rates__loading">Loading rate names…</p>
-                    ) : names.length === 0 ? (
-                        <p className="shipping-rates__list-hint">
-                            No named shipping rates found, or they could not be loaded.
-                        </p>
-                    ) : (
-                        <p className="shipping-rates__list-hint">
-                            Narrow by delivery profile and zone, or leave both on All. Applies
-                            where the rate name matches.
-                        </p>
-                    )}
+                    <p className="shipping-rates__list-hint">{tagHint}</p>
                     <form onSubmit={onSubmitSet}>
                         <div className="shipping-rates__row">
                             <div className="shipping-rates__field">
-                                <label htmlFor="shipping-rate-name">Rate name</label>
+                                <label htmlFor="product-tag-select">Product tag</label>
                                 <select
-                                    id="shipping-rate-name"
-                                    value={selected}
-                                    onChange={(e) => setSelected(e.target.value)}
-                                    disabled={busy || names.length === 0 || controlsLocked}
+                                    id="product-tag-select"
+                                    value={selectedTag}
+                                    onChange={(e) => setSelectedTag(e.target.value)}
+                                    disabled={busy || tags.length === 0 || controlsLocked}
                                 >
-                                    {names.map((n) => (
-                                        <option key={n} value={n}>
-                                            {n}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="shipping-rates__field shipping-rates__field--filter">
-                                <label htmlFor="shipping-profile">Delivery profile</label>
-                                <select
-                                    id="shipping-profile"
-                                    value={profileId}
-                                    onChange={(e) => onProfileChange(e.target.value)}
-                                    disabled={busy || controlsLocked}
-                                >
-                                    <option value={ALL_VALUE}>All</option>
-                                    {profiles.map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.name || "Unnamed profile"}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="shipping-rates__field shipping-rates__field--filter">
-                                <label htmlFor="shipping-zone">Delivery zone</label>
-                                <select
-                                    id="shipping-zone"
-                                    value={zoneId}
-                                    onChange={(e) => setZoneId(e.target.value)}
-                                    disabled={busy || controlsLocked}
-                                >
-                                    <option value={ALL_VALUE}>All</option>
-                                    {zoneOptions.map((z) => (
-                                        <option key={z.id} value={z.id}>
-                                            {z.name || "Unnamed zone"}
+                                    <option value="">Select a tag…</option>
+                                    {tags.map((t) => (
+                                        <option key={t} value={t}>
+                                            {t}
                                         </option>
                                     ))}
                                 </select>
@@ -486,7 +426,7 @@ export default function ShippingRatesPanel(): ReactNode {
                             <div className="shipping-rates__field-group shipping-rates__field-group--value">
                                 <div className="shipping-rates__field shipping-rates__field--mode">
                                     <span
-                                        id="shipping-rate-adjustment-label"
+                                        id="product-tag-adjustment-label"
                                         className="shipping-rates__segment-label"
                                     >
                                         Adjustment
@@ -494,7 +434,7 @@ export default function ShippingRatesPanel(): ReactNode {
                                     <div
                                         className="shipping-rates__segment"
                                         role="group"
-                                        aria-labelledby="shipping-rate-adjustment-label"
+                                        aria-labelledby="product-tag-adjustment-label"
                                     >
                                         <button
                                             type="button"
@@ -525,11 +465,11 @@ export default function ShippingRatesPanel(): ReactNode {
                                     </div>
                                 </div>
                                 <div className="shipping-rates__field shipping-rates__field--percent">
-                                    <label htmlFor="shipping-rate-percent">
+                                    <label htmlFor="product-tag-percent">
                                         {adjustmentMode === "percent" ? "Percent" : "Amount"}
                                     </label>
                                     <input
-                                        id="shipping-rate-percent"
+                                        id="product-tag-percent"
                                         type="text"
                                         inputMode="decimal"
                                         autoComplete="off"
@@ -539,19 +479,25 @@ export default function ShippingRatesPanel(): ReactNode {
                                         value={percent}
                                         onChange={(e) => setPercent(e.target.value)}
                                         disabled={busy || controlsLocked}
-                                        aria-describedby="shipping-rate-percent-hint"
+                                        aria-describedby="product-tag-percent-hint"
                                     />
                                 </div>
                             </div>
                             <button
                                 type="submit"
                                 className="shipping-rates__set"
-                                disabled={busy || names.length === 0 || !canSet}
+                                disabled={busy || !selectedTag.trim() || !canSet}
                             >
                                 Set
                             </button>
                         </div>
-                        <p id="shipping-rate-percent-hint" className="shipping-rates__list-hint">
+                        <p id="product-tag-percent-hint" className="shipping-rates__list-hint">
+                            {variantCount !== null && selectedTag ? (
+                                <>
+                                    {variantCount} variant{variantCount === 1 ? "" : "s"} loaded
+                                    for this tag.{" "}
+                                </>
+                            ) : null}
                             {adjustmentMode === "percent" ? (
                                 <>
                                     Positive increases price; negative decreases (e.g. -10 for 10%
@@ -559,9 +505,8 @@ export default function ShippingRatesPanel(): ReactNode {
                                 </>
                             ) : (
                                 <>
-                                    Adds or subtracts this amount from each rate in its zone
-                                    currency (negative reduces the price; results below zero become
-                                    0).
+                                    Adds or subtracts this amount from each variant price in shop
+                                    currency (negative reduces; results below zero become 0).
                                 </>
                             )}
                         </p>
@@ -571,7 +516,7 @@ export default function ShippingRatesPanel(): ReactNode {
 
                 <div
                     className="shipping-rates__preview-wrap"
-                    aria-label="Rates that will change"
+                    aria-label="Variant prices that will change"
                 >
                     <h3 className="shipping-rates__preview-title">Preview</h3>
                     {pendingConfirmation ? (
@@ -594,13 +539,19 @@ export default function ShippingRatesPanel(): ReactNode {
                             </button>
                         </div>
                     ) : null}
-                    {previewLoading ? (
+                    {loadingCatalog && selectedTag ? (
+                        <p className="shipping-rates__loading">Loading tagged variants…</p>
+                    ) : previewLoading ? (
                         <p className="shipping-rates__loading">Updating preview…</p>
+                    ) : !selectedTag.trim() ? (
+                        <p className="shipping-rates__preview-empty">
+                            Select a product tag to load variants and preview price changes.
+                        </p>
                     ) : !previewReady ? (
                         <p className="shipping-rates__preview-empty">
-                            Choose a rate name and enter a{" "}
+                            Enter a{" "}
                             {adjustmentMode === "percent" ? "percent" : "fixed amount change"} to
-                            list affected rates.
+                            list affected variants.
                         </p>
                     ) : previewError ? (
                         <p className="shipping-rates__preview-empty" role="alert">
@@ -608,8 +559,7 @@ export default function ShippingRatesPanel(): ReactNode {
                         </p>
                     ) : !preview || preview.length === 0 ? (
                         <p className="shipping-rates__preview-empty">
-                            No adjustable rates match this name (or none have a fixed price to
-                            update).
+                            No variants found for this tag, or catalog is still loading.
                         </p>
                     ) : (
                         <div className="shipping-rates__preview">
@@ -620,10 +570,10 @@ export default function ShippingRatesPanel(): ReactNode {
                                 <section
                                     key={prof.id}
                                     className="shipping-rates__profile"
-                                    aria-label={prof.name || "Delivery profile"}
+                                    aria-label={prof.name || "Product"}
                                 >
                                     <h4 className="shipping-rates__profile-name">
-                                        {prof.name || "Unnamed profile"}
+                                        {prof.name || "Untitled product"}
                                     </h4>
                                     {prof.zones.map((zone) => (
                                         <div
@@ -631,7 +581,7 @@ export default function ShippingRatesPanel(): ReactNode {
                                             className="shipping-rates__zone"
                                         >
                                             <h5 className="shipping-rates__zone-name">
-                                                {zone.name || "Unnamed zone"}
+                                                {zone.name || "Variants"}
                                             </h5>
                                             <ul className="shipping-rates__rate-list">
                                                 {zone.rows.map((row) => {

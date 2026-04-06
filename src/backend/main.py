@@ -11,9 +11,22 @@ from backend.pysrc.security import Security
 from backend.pysrc.database import Database
 from backend.pysrc.environment import Environment
 from backend.pysrc.routes import Routes
+from backend.pysrc.catalog_cache import get_shipping_catalog
+from backend.pysrc.product_tag_pricing import (
+    apply_variant_price_changes,
+    create_tagged_product_job,
+    delete_tagged_product_job,
+    fetch_product_tag_strings,
+    preview_variant_price_changes,
+    take_tagged_product_job,
+)
+from backend.pysrc.shipping_catalog_job import (
+    create_shipping_catalog_job,
+    delete_shipping_catalog_job,
+    take_shipping_catalog_job,
+)
 from backend.pysrc.shipping_rates import (
     adjust_rates_by_name_percent,
-    collect_methods_and_warnings,
     preview_rate_changes
 )
 
@@ -43,6 +56,8 @@ def init_graphql_request_g() -> None:
     flask.g.graphql_queries = 0
     flask.g.graphql_mutations = 0
     flask.g.allow_graphql_mutations = False
+    flask.g.graphql_phase_total = None
+    flask.g.graphql_phase_done = None
 
 
 @application.before_request
@@ -75,6 +90,12 @@ def add_graphql_request_count_headers(resp: Response) -> Response:
     m = int(getattr(flask.g, "graphql_mutations", 0))
     resp.headers["X-GraphQL-Queries-Request"] = str(q)
     resp.headers["X-GraphQL-Mutations-Request"] = str(m)
+    pt = getattr(flask.g, "graphql_phase_total", None)
+    pd = getattr(flask.g, "graphql_phase_done", None)
+    if isinstance(pt, (int, float)):
+        resp.headers["X-GraphQL-Phase-Total"] = str(int(pt))
+    if isinstance(pd, (int, float)):
+        resp.headers["X-GraphQL-Phase-Done"] = str(int(pd))
     return resp
 
 @application.errorhandler(Exception)
@@ -111,23 +132,188 @@ def oauth():
     return flask.jsonify({ "oauthSuccess": True })
 
 
+@application.route(Routes.SHIPPING_CATALOG_START, methods=["POST"])
+def shipping_catalog_start():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    jid = create_shipping_catalog_job(Server.shop_domain, token)
+    return flask.jsonify({ "jobId": jid })
+
+
+@application.route(Routes.SHIPPING_CATALOG_STEP, methods=["POST"])
+def shipping_catalog_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({ "error": "Missing jobId" }), 400
+    job = take_shipping_catalog_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({ "error": "Unknown or expired job" }), 404
+    try:
+        result = job.step()
+    except RuntimeError as e:
+        return flask.jsonify({ "error": str(e) }), 502
+    flask.g.graphql_phase_total = result.get("total")
+    flask.g.graphql_phase_done = result.get("completed")
+    if result.get("done"):
+        delete_shipping_catalog_job(job_id.strip())
+    return flask.jsonify(result)
+
+
 @application.route(Routes.SHIPPING_RATE_NAMES, methods=["GET"])
 def shipping_rate_names():
     token = Database.AccessTokens.get_token(Server.shop_domain)
     if not token:
         return flask.jsonify({ "error": "Not installed" }), 401
-    try:
-        rows, warnings = collect_methods_and_warnings(Server.shop_domain, token)
-        names = rows.unique_rate_names()
-        profiles, zones_by_profile = rows.build_delivery_profile_filters()
+    cached = get_shipping_catalog(Server.shop_domain)
+    if cached is None:
         return flask.jsonify({
-            "names": names,
-            "profiles": profiles,
-            "zonesByProfile": zones_by_profile,
+            "error": "Shipping catalog not loaded. Wait for loading to finish.",
+        }), 400
+    rows, warnings = cached
+    filters = rows.build_delivery_profile_filters()
+    return flask.jsonify({
+        "names": rows.unique_rate_names(),
+        **filters.to_json(),
+        "warnings": warnings,
+    })
+
+
+@application.route(Routes.PRODUCT_TAGS, methods=["GET"])
+def product_tags_list():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    try:
+        tags = fetch_product_tag_strings(Server.shop_domain, token)
+        return flask.jsonify({ "tags": tags })
+    except RuntimeError as e:
+        return flask.jsonify({ "error": str(e) }), 502
+
+
+@application.route(Routes.PRODUCT_TAG_CATALOG_START, methods=["POST"])
+def product_tag_catalog_start():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    tag_raw = body.get("tag")
+    tag = tag_raw.strip() if isinstance(tag_raw, str) else ""
+    if not tag:
+        return flask.jsonify({ "error": "Missing tag" }), 400
+    jid = create_tagged_product_job(Server.shop_domain, token, tag)
+    return flask.jsonify({ "jobId": jid })
+
+
+@application.route(Routes.PRODUCT_TAG_CATALOG_STEP, methods=["POST"])
+def product_tag_catalog_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({ "error": "Missing jobId" }), 400
+    job = take_tagged_product_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({ "error": "Unknown or expired job" }), 404
+    try:
+        result = job.step()
+    except RuntimeError as e:
+        return flask.jsonify({ "error": str(e) }), 502
+    flask.g.graphql_phase_total = result.total
+    flask.g.graphql_phase_done = result.completed
+    if result.done:
+        delete_tagged_product_job(job_id.strip())
+    return flask.jsonify(result.to_json())
+
+
+@application.route(Routes.PRODUCT_TAG_PRICING_PREVIEW, methods=["GET"])
+def product_tag_pricing_preview():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    tag = flask.request.args.get("tag", "").strip()
+    if not tag:
+        return flask.jsonify({ "error": "Missing tag" }), 400
+    percent_raw = flask.request.args.get("percent", "")
+    try:
+        percent = float(percent_raw.strip())
+    except (TypeError, ValueError):
+        return flask.jsonify({ "error": "Invalid percent" }), 400
+    mode_raw = flask.request.args.get("mode", "").strip().lower()
+    adjustment_mode: Literal["percent", "offset"] = (
+        "offset"
+        if mode_raw in ("offset", "absolute")
+        else "percent"
+    )
+    try:
+        profiles, warnings = preview_variant_price_changes(
+            Server.shop_domain,
+            tag,
+            percent,
+            adjustment_mode,
+        )
+        return flask.jsonify({
+            "profiles": [asdict(p) for p in profiles],
             "warnings": warnings,
         })
     except RuntimeError as e:
-        return flask.jsonify({ "error": str(e) }), 502
+        return flask.jsonify({ "error": str(e) }), 400
+
+
+@application.route(Routes.PRODUCT_TAG_PRICING_ADJUST, methods=["POST"])
+def product_tag_pricing_adjust():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({ "error": "Not installed" }), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    tag_raw = body.get("tag")
+    percent_raw = body.get("percent")
+    tag = tag_raw.strip() if isinstance(tag_raw, str) else ""
+    if not tag:
+        return flask.jsonify({ "error": "Missing tag" }), 400
+    if isinstance(percent_raw, bool) or percent_raw is None:
+        return flask.jsonify({ "error": "Invalid percent" }), 400
+    if isinstance(percent_raw, (int, float)):
+        percent = float(percent_raw)
+    elif isinstance(percent_raw, str):
+        try:
+            percent = float(percent_raw.strip())
+        except ValueError:
+            return flask.jsonify({ "error": "Invalid percent" }), 400
+    else:
+        return flask.jsonify({ "error": "Invalid percent" }), 400
+    mode_body = body.get("mode")
+    adjustment_mode_post: Literal["percent", "offset"] = (
+        "offset"
+        if isinstance(mode_body, str)
+        and mode_body.strip().lower() in ("offset", "absolute")
+        else "percent"
+    )
+    try:
+        updated, warnings, user_msgs = apply_variant_price_changes(
+            Server.shop_domain,
+            token,
+            tag,
+            percent,
+            adjustment_mode_post,
+        )
+        return flask.jsonify({
+            "updated": updated,
+            "warnings": warnings,
+            "userErrors": user_msgs,
+        })
+    except RuntimeError as e:
+        return flask.jsonify({ "error": str(e) }), 400
 
 
 @application.route(Routes.SHIPPING_RATES_PREVIEW, methods=["GET"])

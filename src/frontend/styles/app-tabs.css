@@ -1,0 +1,48 @@
+.app-tabs {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #1a1a1a;
+}
+
+.app-tabs__bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0 0.25rem;
+    margin: 0 0 1rem;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.app-tabs__tab {
+    appearance: none;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #64748b;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.5rem 0.85rem;
+    margin-bottom: -1px;
+    cursor: pointer;
+    border-radius: 6px 6px 0 0;
+}
+
+.app-tabs__tab:hover {
+    color: #334155;
+    background: #f8fafc;
+}
+
+.app-tabs__tab--active {
+    color: #0f172a;
+    border-bottom-color: #2563eb;
+}
+
+.app-tabs__tab:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+.app-tabs__panel {
+    outline: none;
+}

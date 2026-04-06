@@ -1,0 +1,11 @@
+query ProductTagsPage($first: Int!, $after: String) {
+  productTags(first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      node
+    }
+  }
+}

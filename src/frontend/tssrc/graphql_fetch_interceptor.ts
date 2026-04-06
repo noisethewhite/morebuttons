@@ -1,6 +1,9 @@
 export type GraphqlHeaderListener = (queries: number, mutations: number) => void
 
+export type GraphqlPhaseListener = (done: number, total: number) => void
+
 let listener: GraphqlHeaderListener | null = null
+let phaseListener: GraphqlPhaseListener | null = null
 let pendingQ = 0
 let pendingM = 0
 
@@ -11,6 +14,15 @@ export function setGraphqlHeaderListener(fn: GraphqlHeaderListener | null): void
         pendingQ = 0
         pendingM = 0
     }
+}
+
+export function setGraphqlPhaseListener(fn: GraphqlPhaseListener | null): void {
+    phaseListener = fn
+}
+
+/** Hide the phase progress bar until the next stepped job emits phase headers. */
+export function clearGraphqlPhase(): void {
+    phaseListener?.(0, 0)
 }
 
 function parseHeader(value: string | null): number {
@@ -55,6 +67,11 @@ export function installGraphqlFetchInterceptor(): void {
         const res = await orig(input, init)
         const q = parseHeader(res.headers.get("X-GraphQL-Queries-Request"))
         const m = parseHeader(res.headers.get("X-GraphQL-Mutations-Request"))
+        const phaseDone = parseHeader(res.headers.get("X-GraphQL-Phase-Done"))
+        const phaseTotal = parseHeader(res.headers.get("X-GraphQL-Phase-Total"))
+        if (phaseTotal > 0 || phaseDone > 0) {
+            phaseListener?.(phaseDone, phaseTotal)
+        }
         if (q === 0 && m === 0) {
             return res
         }
