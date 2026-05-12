@@ -31,9 +31,21 @@ def lookup_order_by_tracking(
 
     conn = parsed.orders
     nodes = [edge.node for edge in conn.edges]
+    has_next = conn.pageInfo.hasNextPage
 
-    if conn.pageInfo.hasNextPage:
-        warnings.append("More than 10 results — refine your search.")
+    # Exact-match filter — Shopify's tracking_number: search does fuzzy
+    # matching, so results may include orders whose tracking number only
+    # partially matches; keep only orders with a fulfillment whose tracking
+    # number equals the search term exactly (case-insensitive).
+    tracking_lower = tracking_number.lower()
+    nodes = [
+        n for n in nodes
+        if any(
+            ti.number and ti.number.lower() == tracking_lower
+            for f in n.fulfillments
+            for ti in f.trackingInfo
+        )
+    ]
 
     if carrier:
         carrier_lower = carrier.lower()
@@ -45,6 +57,12 @@ def lookup_order_by_tracking(
                 for ti in f.trackingInfo
             )
         ]
+
+    # Warn only when Shopify has further pages AND we found matches — if we
+    # have matches there may be more on the next page; if we have none the
+    # extra Shopify results were all fuzzy-match false positives.
+    if has_next and nodes:
+        warnings.append("More than 10 results — refine your search.")
 
     results: list[OrderResult] = []
     for node in nodes:

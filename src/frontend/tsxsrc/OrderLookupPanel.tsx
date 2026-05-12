@@ -284,7 +284,7 @@ export default function OrderLookupPanel(): ReactNode {
                                     ) : null}
                                     {order.weightGrams != null ? (
                                         <>
-                                            <span className="order-lookup__card-label">Weight</span>
+                                            <span className="order-lookup__card-label">Gross weight</span>
                                             <span className="order-lookup__card-value">
                                                 {order.weightGrams.toLocaleString()} g
                                             </span>

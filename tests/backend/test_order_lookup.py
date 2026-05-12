@@ -143,53 +143,85 @@ def test_carrier_filter_case_insensitive():
 
 
 def test_carrier_filter_none_returns_all():
-    node1 = _make_order(name="#1001")
-    node2 = _make_order(
-        name="#1002",
-        fulfillments=[FulfillmentNode(
-            trackingInfo=[FulfillmentTrackingInfo(company="FedEx", number="T2")]
-        )],
-    )
+    # Two orders share the same tracking number but have different carriers.
+    # carrier=None should return both.
+    node1 = _make_order(name="#1001", fulfillments=[FulfillmentNode(
+        trackingInfo=[FulfillmentTrackingInfo(company="DHL", number="SHARED1")]
+    )])
+    node2 = _make_order(name="#1002", fulfillments=[FulfillmentNode(
+        trackingInfo=[FulfillmentTrackingInfo(company="FedEx", number="SHARED1")]
+    )])
     parsed = _make_parsed([node1, node2])
 
     with patch(PATCH_TARGET, return_value=parsed):
         results, _ = lookup_order_by_tracking(
-            "shop.myshopify.com", "token", "T1", carrier=None
+            "shop.myshopify.com", "token", "SHARED1", carrier=None
         )
 
     assert len(results) == 2
 
 
 def test_guest_checkout_customer_name():
-    node = _make_order(customer=None)
+    node = _make_order(customer=None)  # default fulfillment has number="ABC123"
     parsed = _make_parsed([node])
 
     with patch(PATCH_TARGET, return_value=parsed):
-        results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "T1")
+        results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "ABC123")
 
     assert results[0].customerName == "Guest"
 
 
 def test_no_shipping_line_delivery_fields_are_none():
-    node = _make_order(shipping_line=None)
+    node = _make_order(shipping_line=None)  # default fulfillment has number="ABC123"
     parsed = _make_parsed([node])
 
     with patch(PATCH_TARGET, return_value=parsed):
-        results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "T1")
+        results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "ABC123")
 
     assert results[0].deliveryCost is None
     assert results[0].deliveryTitle is None
 
 
-def test_has_next_page_adds_warning():
-    node = _make_order()
+def test_has_next_page_adds_warning_when_results_match():
+    node = _make_order()  # default fulfillment has number="ABC123"
     parsed = _make_parsed([node], has_next_page=True)
 
     with patch(PATCH_TARGET, return_value=parsed):
-        _, warnings = lookup_order_by_tracking("shop.myshopify.com", "token", "T1")
+        _, warnings = lookup_order_by_tracking("shop.myshopify.com", "token", "ABC123")
 
     assert len(warnings) == 1
     assert "10" in warnings[0]
+
+
+def test_has_next_page_no_warning_when_all_filtered_out():
+    # hasNextPage=True but the returned orders don't actually match the
+    # tracking number (Shopify fuzzy match false positives) → no warning.
+    node = _make_order()  # number="ABC123"
+    parsed = _make_parsed([node], has_next_page=True)
+
+    with patch(PATCH_TARGET, return_value=parsed):
+        results, warnings = lookup_order_by_tracking("shop.myshopify.com", "token", "DIFFERENT")
+
+    assert results == []
+    assert warnings == []
+
+
+def test_tracking_exact_match_filters_fuzzy_results():
+    # Shopify returns an order whose tracking number only partially matches —
+    # the backend must discard it.
+    node_exact = _make_order(name="#1001", fulfillments=[FulfillmentNode(
+        trackingInfo=[FulfillmentTrackingInfo(company="DHL", number="1Z999")]
+    )])
+    node_fuzzy = _make_order(name="#1002", fulfillments=[FulfillmentNode(
+        trackingInfo=[FulfillmentTrackingInfo(company="DHL", number="1Z999ABC")]
+    )])
+    parsed = _make_parsed([node_exact, node_fuzzy])
+
+    with patch(PATCH_TARGET, return_value=parsed):
+        results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "1Z999")
+
+    assert len(results) == 1
+    assert results[0].orderNumber == "#1001"
 
 
 def test_graphql_send_none_returns_empty_and_warning():
@@ -224,11 +256,11 @@ def test_address_mapped_correctly():
             zip="10117",
             countryCodeV2="DE",
         )
-    )
+    )  # default fulfillment has number="ABC123"
     parsed = _make_parsed([node])
 
     with patch(PATCH_TARGET, return_value=parsed):
-        results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "T1")
+        results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "ABC123")
 
     addr = results[0].address
     assert addr is not None
