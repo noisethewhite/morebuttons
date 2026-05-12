@@ -29,6 +29,12 @@ from backend.pysrc.shipping_rates import (
     adjust_rates_by_name_percent,
     preview_rate_changes
 )
+from backend.pysrc.order_carrier_job import (
+    create_order_carrier_job,
+    delete_order_carrier_job,
+    take_order_carrier_job,
+)
+from backend.pysrc.order_lookup import lookup_order_by_tracking
 
 
 # ESSENTIAL for Gunicorn to see it.
@@ -436,6 +442,80 @@ def graphql_mutation_allow():
     Database.MutationAllow.set_allow(Server.shop_domain, allow)
     flask.g.allow_graphql_mutations = allow
     return flask.jsonify({ "allowMutations": allow })
+
+
+@application.route(Routes.ORDER_CARRIER_CATALOG_START, methods=["POST"])
+def order_carrier_catalog_start():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    date_from_raw = body.get("dateFrom")
+    date_to_raw = body.get("dateTo")
+    max_orders_raw = body.get("maxOrders", 1000)
+    date_from = (
+        date_from_raw.strip()
+        if isinstance(date_from_raw, str) and date_from_raw.strip()
+        else None
+    )
+    date_to = (
+        date_to_raw.strip()
+        if isinstance(date_to_raw, str) and date_to_raw.strip()
+        else None
+    )
+    try:
+        max_orders = max(1, min(10000, int(max_orders_raw)))
+    except (TypeError, ValueError):
+        max_orders = 1000
+    jid = create_order_carrier_job(Server.shop_domain, token, max_orders, date_from, date_to)
+    return flask.jsonify({"jobId": jid})
+
+
+@application.route(Routes.ORDER_CARRIER_CATALOG_STEP, methods=["POST"])
+def order_carrier_catalog_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({"error": "Missing jobId"}), 400
+    job = take_order_carrier_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({"error": "Unknown or expired job"}), 404
+    try:
+        result = job.step()
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 502
+    flask.g.graphql_phase_total = result.total
+    flask.g.graphql_phase_done = result.completed
+    if result.done:
+        delete_order_carrier_job(job_id.strip())
+    return flask.jsonify(result.to_json())
+
+
+@application.route(Routes.ORDER_BY_TRACKING, methods=["GET"])
+def order_by_tracking():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    tracking_number = flask.request.args.get("trackingNumber", "").strip()
+    if not tracking_number:
+        return flask.jsonify({"error": "Missing trackingNumber"}), 400
+    carrier_raw = flask.request.args.get("carrier", "").strip()
+    carrier = carrier_raw if carrier_raw else None
+    try:
+        results, warnings = lookup_order_by_tracking(
+            Server.shop_domain, token, tracking_number, carrier
+        )
+        return flask.jsonify({
+            "orders": [r.to_json() for r in results],
+            "warnings": warnings,
+        })
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 502
 
 
 @application.route("/")

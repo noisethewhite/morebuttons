@@ -16,3 +16,6 @@ class Routes(StrEnum):
     PRODUCT_TAG_PRICING_PREVIEW = f"{API}/product-tag-pricing/preview"
     PRODUCT_TAG_PRICING_ADJUST = f"{API}/product-tag-pricing/adjust"
     GRAPHQL_MUTATION_ALLOW = f"{API}/graphql-mutation-allow"
+    ORDER_CARRIER_CATALOG_START = f"{API}/order-carrier-catalog/start"
+    ORDER_CARRIER_CATALOG_STEP  = f"{API}/order-carrier-catalog/step"
+    ORDER_BY_TRACKING           = f"{API}/order-by-tracking"
