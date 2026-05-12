@@ -30,4 +30,8 @@ esbuild.build({
         "src/frontend/styles/shipping-rates.css",
         "dist/shipping-rates.css"
     )
+    fs.copyFileSync(
+        "src/frontend/styles/order-lookup.css",
+        "dist/order-lookup.css"
+    )
 });
