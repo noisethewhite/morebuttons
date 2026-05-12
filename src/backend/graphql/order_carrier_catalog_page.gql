@@ -1,0 +1,17 @@
+query OrderCarrierPage($first: Int!, $after: String, $query: String) {
+  orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+    edges {
+      node {
+        fulfillments {
+          trackingInfo {
+            company
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}

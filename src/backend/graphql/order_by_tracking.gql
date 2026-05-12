@@ -1,0 +1,51 @@
+query OrderByTracking($query: String!) {
+  orders(first: 10, query: $query) {
+    edges {
+      node {
+        id
+        name
+        displayFulfillmentStatus
+        customer {
+          firstName
+          lastName
+        }
+        shippingAddress {
+          address1
+          address2
+          city
+          province
+          country
+          zip
+          countryCodeV2
+        }
+        totalWeight
+        shippingLine {
+          title
+          originalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
+        currentTotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        fulfillments {
+          trackingInfo {
+            number
+            company
+            url
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
