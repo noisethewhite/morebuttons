@@ -506,9 +506,16 @@ def order_by_tracking():
         return flask.jsonify({"error": "Missing trackingNumber"}), 400
     carrier_raw = flask.request.args.get("carrier", "").strip()
     carrier = carrier_raw if carrier_raw else None
+    date_from = flask.request.args.get("dateFrom", "").strip() or None
+    date_to = flask.request.args.get("dateTo", "").strip() or None
+    try:
+        max_orders = max(1, min(10000, int(flask.request.args.get("maxOrders", "250"))))
+    except (TypeError, ValueError):
+        max_orders = 250
     try:
         results, warnings = lookup_order_by_tracking(
-            Server.shop_domain, token, tracking_number, carrier
+            Server.shop_domain, token, tracking_number, carrier,
+            date_from=date_from, date_to=date_to, max_orders=max_orders,
         )
         return flask.jsonify({
             "orders": [r.to_json() for r in results],

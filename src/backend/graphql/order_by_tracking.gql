@@ -1,5 +1,5 @@
-query OrderByTracking($query: String!) {
-  orders(first: 10, query: $query) {
+query OrderTrackingPage($first: Int!, $after: String, $query: String) {
+  orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
     edges {
       node {
         id

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch
 
 import pytest
 
@@ -58,11 +58,12 @@ def _make_order(
 def _make_parsed(
     nodes: list[OrderNode],
     has_next_page: bool = False,
+    end_cursor: str | None = None,
 ) -> OrdersByTrackingData:
     edges = [Edge(node=n) for n in nodes]
     conn: Connection[OrderNode] = Connection(
         edges=edges,
-        pageInfo=PageInfo(hasNextPage=has_next_page),
+        pageInfo=PageInfo(hasNextPage=has_next_page, endCursor=end_cursor),
     )
     return OrdersByTrackingData(orders=conn)
 
@@ -111,7 +112,7 @@ def test_carrier_filter_keeps_matching_orders():
     node_fedex = _make_order(
         name="#1002",
         fulfillments=[FulfillmentNode(
-            trackingInfo=[FulfillmentTrackingInfo(company="FedEx", number="T2")]
+            trackingInfo=[FulfillmentTrackingInfo(company="FedEx", number="T1")]
         )],
     )
     parsed = _make_parsed([node_dhl, node_fedex])
@@ -143,7 +144,7 @@ def test_carrier_filter_case_insensitive():
 
 
 def test_carrier_filter_none_returns_all():
-    # Two orders share the same tracking number but have different carriers.
+    # Two orders share the same tracking number but have different carriers;
     # carrier=None should return both.
     node1 = _make_order(name="#1001", fulfillments=[FulfillmentNode(
         trackingInfo=[FulfillmentTrackingInfo(company="DHL", number="SHARED1")]
@@ -162,7 +163,7 @@ def test_carrier_filter_none_returns_all():
 
 
 def test_guest_checkout_customer_name():
-    node = _make_order(customer=None)  # default fulfillment has number="ABC123"
+    node = _make_order(customer=None)  # default fulfillment number="ABC123"
     parsed = _make_parsed([node])
 
     with patch(PATCH_TARGET, return_value=parsed):
@@ -172,7 +173,7 @@ def test_guest_checkout_customer_name():
 
 
 def test_no_shipping_line_delivery_fields_are_none():
-    node = _make_order(shipping_line=None)  # default fulfillment has number="ABC123"
+    node = _make_order(shipping_line=None)  # default fulfillment number="ABC123"
     parsed = _make_parsed([node])
 
     with patch(PATCH_TARGET, return_value=parsed):
@@ -182,22 +183,25 @@ def test_no_shipping_line_delivery_fields_are_none():
     assert results[0].deliveryTitle is None
 
 
-def test_has_next_page_adds_warning_when_results_match():
-    node = _make_order()  # default fulfillment has number="ABC123"
-    parsed = _make_parsed([node], has_next_page=True)
+def test_has_next_page_warning_when_results_found():
+    # hasNextPage=True and we found a match → warn there may be more
+    node = _make_order()  # number="ABC123"
+    parsed = _make_parsed([node], has_next_page=True, end_cursor="cur1")
 
     with patch(PATCH_TARGET, return_value=parsed):
-        _, warnings = lookup_order_by_tracking("shop.myshopify.com", "token", "ABC123")
+        results, warnings = lookup_order_by_tracking("shop.myshopify.com", "token", "ABC123")
 
+    assert len(results) == 1
     assert len(warnings) == 1
-    assert "10" in warnings[0]
+    assert "additional" in warnings[0]
 
 
-def test_has_next_page_no_warning_when_all_filtered_out():
-    # hasNextPage=True but the returned orders don't actually match the
-    # tracking number (Shopify fuzzy match false positives) → no warning.
+def test_no_warning_when_no_matching_orders_on_page():
+    # hasNextPage=True but the returned orders don't match the tracking number
+    # (Shopify date-range scan with no match on this page) → continue to next.
+    # With endCursor=None, next_page_cursor() returns None → loop exits, no warning.
     node = _make_order()  # number="ABC123"
-    parsed = _make_parsed([node], has_next_page=True)
+    parsed = _make_parsed([node], has_next_page=True)  # endCursor=None
 
     with patch(PATCH_TARGET, return_value=parsed):
         results, warnings = lookup_order_by_tracking("shop.myshopify.com", "token", "DIFFERENT")
@@ -207,15 +211,13 @@ def test_has_next_page_no_warning_when_all_filtered_out():
 
 
 def test_tracking_exact_match_filters_fuzzy_results():
-    # Shopify returns an order whose tracking number only partially matches —
-    # the backend must discard it.
     node_exact = _make_order(name="#1001", fulfillments=[FulfillmentNode(
         trackingInfo=[FulfillmentTrackingInfo(company="DHL", number="1Z999")]
     )])
-    node_fuzzy = _make_order(name="#1002", fulfillments=[FulfillmentNode(
+    node_partial = _make_order(name="#1002", fulfillments=[FulfillmentNode(
         trackingInfo=[FulfillmentTrackingInfo(company="DHL", number="1Z999ABC")]
     )])
-    parsed = _make_parsed([node_exact, node_fuzzy])
+    parsed = _make_parsed([node_exact, node_partial])
 
     with patch(PATCH_TARGET, return_value=parsed):
         results, _ = lookup_order_by_tracking("shop.myshopify.com", "token", "1Z999")
@@ -232,17 +234,31 @@ def test_graphql_send_none_returns_empty_and_warning():
     assert len(warnings) == 1
 
 
-def test_shopify_query_uses_tracking_number_format():
+def test_date_range_passed_to_shopify_query():
     parsed = _make_parsed([])
-
     with patch(PATCH_TARGET, return_value=parsed) as mock_send:
-        lookup_order_by_tracking("shop.myshopify.com", "token", "MYTRACK123")
+        lookup_order_by_tracking(
+            "shop.myshopify.com", "token", "X",
+            date_from="2024-01-01", date_to="2024-12-31",
+        )
+    variables = mock_send.call_args[0][3]
+    assert variables["query"] == "created_at:>=2024-01-01 created_at:<=2024-12-31"
 
-    _, kwargs = mock_send.call_args
-    # variables may be passed as positional arg (4th) or keyword
-    call_args = mock_send.call_args
-    variables = call_args[0][3] if len(call_args[0]) >= 4 else call_args[1].get("variables_dict") or call_args[0][3]
-    assert variables == {"query": "tracking_number:MYTRACK123"}
+
+def test_no_date_range_passes_none_query():
+    parsed = _make_parsed([])
+    with patch(PATCH_TARGET, return_value=parsed) as mock_send:
+        lookup_order_by_tracking("shop.myshopify.com", "token", "X")
+    variables = mock_send.call_args[0][3]
+    assert variables["query"] is None
+
+
+def test_max_orders_caps_batch_size():
+    parsed = _make_parsed([])
+    with patch(PATCH_TARGET, return_value=parsed) as mock_send:
+        lookup_order_by_tracking("shop.myshopify.com", "token", "X", max_orders=50)
+    variables = mock_send.call_args[0][3]
+    assert variables["first"] == 50
 
 
 def test_address_mapped_correctly():
@@ -256,7 +272,7 @@ def test_address_mapped_correctly():
             zip="10117",
             countryCodeV2="DE",
         )
-    )  # default fulfillment has number="ABC123"
+    )  # default fulfillment number="ABC123"
     parsed = _make_parsed([node])
 
     with patch(PATCH_TARGET, return_value=parsed):

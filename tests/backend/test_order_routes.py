@@ -123,11 +123,17 @@ def test_order_lookup_returns_orders(client):
     assert data["warnings"] == []
 
 
-def test_order_lookup_passes_carrier(client):
+def test_order_lookup_passes_date_range_and_carrier(client):
     with patch("backend.pysrc.security.Security.get_session_token", return_value="t"), \
          patch("backend.pysrc.security.Security.get_shop_domain", return_value="shop.myshopify.com"), \
          patch("backend.pysrc.database.Database.MutationAllow.get_allow", return_value=False), \
          patch("backend.pysrc.database.Database.AccessTokens.get_token", return_value="tok"), \
          patch("backend.main.lookup_order_by_tracking", return_value=([], [])) as mock_lookup:
-        client.get("/api/order-by-tracking?trackingNumber=X&carrier=DHL")
-    mock_lookup.assert_called_once_with("shop.myshopify.com", "tok", "X", "DHL")
+        client.get(
+            "/api/order-by-tracking"
+            "?trackingNumber=X&carrier=DHL&dateFrom=2024-01-01&dateTo=2024-12-31&maxOrders=500"
+        )
+    mock_lookup.assert_called_once_with(
+        "shop.myshopify.com", "tok", "X", "DHL",
+        date_from="2024-01-01", date_to="2024-12-31", max_orders=500,
+    )

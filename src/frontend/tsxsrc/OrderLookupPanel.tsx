@@ -118,6 +118,9 @@ export default function OrderLookupPanel(): ReactNode {
         try {
             const q = new URLSearchParams({ trackingNumber: tn })
             if (selectedCarrier) q.set("carrier", selectedCarrier)
+            if (dateFrom) q.set("dateFrom", dateFrom)
+            if (dateTo) q.set("dateTo", dateTo)
+            q.set("maxOrders", String(Math.max(1, Number(maxOrders) || 250)))
             const res = await AppBridge.fetchWithToken(
                 `/api/order-by-tracking?${q.toString()}`
             )
