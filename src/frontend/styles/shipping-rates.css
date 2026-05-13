@@ -185,6 +185,27 @@
     cursor: not-allowed;
 }
 
+.shipping-rates__csv-btn {
+    font: inherit;
+    font-weight: 600;
+    padding: 0.5rem 1.1rem;
+    border: 1.5px solid #6b7280;
+    border-radius: 6px;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+}
+
+.shipping-rates__csv-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #374151;
+}
+
+.shipping-rates__csv-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .shipping-rates__status {
     font-size: 0.875rem;
     line-height: 1.45;

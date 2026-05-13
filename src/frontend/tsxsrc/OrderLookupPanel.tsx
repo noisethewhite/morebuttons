@@ -69,10 +69,13 @@ export default function OrderLookupPanel(): ReactNode {
     const [dateFrom, setDateFrom] = useState("")
     const [dateTo, setDateTo] = useState("")
     const [maxOrders, setMaxOrders] = useState("1000")
+    const [packagingWeight, setPackagingWeight] = useState("0")
     const [loadingCarriers, setLoadingCarriers] = useState(false)
     const [carriers, setCarriers] = useState<string[]>([])
     const [selectedCarrier, setSelectedCarrier] = useState("")
     const [carrierError, setCarrierError] = useState<string | null>(null)
+    const [csvLoading, setCsvLoading] = useState(false)
+    const [csvError, setCsvError] = useState<string | null>(null)
 
     // Tracking lookup
     const [trackingNumber, setTrackingNumber] = useState("")
@@ -142,6 +145,37 @@ export default function OrderLookupPanel(): ReactNode {
         }
     }
 
+    async function onDownloadCsv(): Promise<void> {
+        setCsvLoading(true)
+        setCsvError(null)
+        try {
+            const q = new URLSearchParams()
+            if (dateFrom) q.set("dateFrom", dateFrom)
+            if (dateTo) q.set("dateTo", dateTo)
+            q.set("maxOrders", String(Math.max(1, Number(maxOrders) || 1000)))
+            const pw = Math.max(0, Number(packagingWeight) || 0)
+            if (pw) q.set("packagingWeight", String(pw))
+            const res = await AppBridge.fetchWithToken(`/api/order-lookup/csv?${q.toString()}`)
+            if (!res.ok) {
+                const text = await res.text().catch(() => "")
+                setCsvError(`Download failed (${res.status})${text ? ": " + text : "."}.`)
+                return
+            }
+            const blob = await res.blob()
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            const label = [dateFrom, dateTo].filter(Boolean).join("-") || "all"
+            a.href = url
+            a.download = `orders-${label}.csv`
+            a.click()
+            URL.revokeObjectURL(url)
+        } catch (e) {
+            setCsvError(e instanceof Error ? e.message : "Download failed.")
+        } finally {
+            setCsvLoading(false)
+        }
+    }
+
     return (
         <section className="order-lookup" aria-labelledby="order-lookup-heading">
             <h2 id="order-lookup-heading" className="order-lookup__title">
@@ -183,13 +217,32 @@ export default function OrderLookupPanel(): ReactNode {
                             disabled={loadingCarriers}
                         />
                     </div>
+                    <div className="order-lookup__field order-lookup__field--narrow">
+                        <label htmlFor="ol-packaging-weight">Packaging (g)</label>
+                        <input
+                            id="ol-packaging-weight"
+                            type="number"
+                            min={0}
+                            value={packagingWeight}
+                            onChange={(e) => setPackagingWeight(e.target.value)}
+                            disabled={loadingCarriers || csvLoading}
+                        />
+                    </div>
                     <button
                         type="button"
                         className="order-lookup__refresh-btn"
                         onClick={() => void onRefreshCarriers()}
-                        disabled={loadingCarriers}
+                        disabled={loadingCarriers || csvLoading}
                     >
                         {loadingCarriers ? "Loading…" : "Refresh ↺"}
+                    </button>
+                    <button
+                        type="button"
+                        className="order-lookup__csv-btn"
+                        onClick={() => void onDownloadCsv()}
+                        disabled={loadingCarriers || csvLoading}
+                    >
+                        {csvLoading ? "Downloading…" : "CSV ↓"}
                     </button>
                 </div>
                 {loadingCarriers ? (
@@ -200,6 +253,11 @@ export default function OrderLookupPanel(): ReactNode {
                 {carrierError ? (
                     <p className="order-lookup__inline-msg order-lookup__inline-msg--error">
                         {carrierError}
+                    </p>
+                ) : null}
+                {csvError ? (
+                    <p className="order-lookup__inline-msg order-lookup__inline-msg--error">
+                        {csvError}
                     </p>
                 ) : null}
                 <div className="order-lookup__carrier-row">
@@ -285,11 +343,11 @@ export default function OrderLookupPanel(): ReactNode {
                                             </span>
                                         </>
                                     ) : null}
-                                    {order.weightGrams != null ? (
+                                    {(order.weightGrams != null || Number(packagingWeight) > 0) ? (
                                         <>
                                             <span className="order-lookup__card-label">Gross weight</span>
                                             <span className="order-lookup__card-value">
-                                                {order.weightGrams.toLocaleString()} g
+                                                {((order.weightGrams ?? 0) + Math.max(0, Number(packagingWeight) || 0)).toLocaleString()} g
                                             </span>
                                         </>
                                     ) : null}

@@ -87,6 +87,29 @@
     border-color: #1d4ed8;
 }
 
+.order-lookup__csv-btn {
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.4rem 1rem;
+    border: 1px solid #2563eb;
+    border-radius: 6px;
+    background: #fff;
+    color: #2563eb;
+    cursor: pointer;
+    white-space: nowrap;
+    align-self: flex-end;
+}
+
+.order-lookup__csv-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.order-lookup__csv-btn:not(:disabled):hover {
+    background: #eff6ff;
+}
+
 .order-lookup__progress {
     font-size: 0.8125rem;
     color: #64748b;

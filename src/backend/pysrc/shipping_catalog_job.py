@@ -181,6 +181,7 @@ class ShippingCatalogJob:
                         zoneId=zid,
                         zoneName=zname,
                         method=mnode,
+                        zoneCountries=zone.countries,
                     )
                 )
 

@@ -19,6 +19,17 @@ query DeliveryProfileGroupZones(
             zone {
               id
               name
+              countries {
+                code {
+                  countryCode
+                  restOfWorld
+                }
+                name
+                provinces {
+                  code
+                  name
+                }
+              }
             }
             methodDefinitions(first: 250) {
               pageInfo {

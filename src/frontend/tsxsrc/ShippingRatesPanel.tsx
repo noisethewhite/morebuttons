@@ -124,6 +124,8 @@ export default function ShippingRatesPanel(): ReactNode {
     const [previewLoading, setPreviewLoading] = useState(false)
     const [previewError, setPreviewError] = useState<string | null>(null)
     const [previewWarnings, setPreviewWarnings] = useState<string | null>(null)
+    const [csvLoading, setCsvLoading] = useState(false)
+    const [csvProvLoading, setCsvProvLoading] = useState(false)
     const { entries: statusLog, push: pushStatus } = useStatusMessageLog()
 
     const loadCatalog = useCallback(async () => {
@@ -260,6 +262,55 @@ export default function ShippingRatesPanel(): ReactNode {
     function onProfileChange(value: string): void {
         setProfileId(value)
         setZoneId(ALL_VALUE)
+    }
+
+    async function _downloadCsv(url: string, fallbackFilename: string, setLoading: (v: boolean) => void): Promise<void> {
+        setLoading(true)
+        try {
+            const res = await AppBridge.fetchWithToken(url)
+            if (!res.ok) {
+                const data = await readJsonBody<{ error?: string }>(res)
+                pushStatus("err", data?.error ?? `CSV download failed (${res.status}).`)
+                return
+            }
+            const blob = await res.blob()
+            const objUrl = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = objUrl
+            const disposition = res.headers.get("Content-Disposition") ?? ""
+            const match = disposition.match(/filename="([^"]+)"/)
+            a.download = match?.[1] ?? fallbackFilename
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(objUrl)
+        } catch {
+            pushStatus("err", "Could not download CSV.")
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    function onDownloadCsv(): Promise<void> {
+        if (!selected.trim()) return Promise.resolve()
+        const q = new URLSearchParams({ name: selected })
+        if (profileId) q.set("profileId", profileId)
+        return _downloadCsv(
+            `/api/shipping-rates/csv?${q.toString()}`,
+            "shipping-rates.csv",
+            setCsvLoading,
+        )
+    }
+
+    function onDownloadProvinceCsv(): Promise<void> {
+        if (!selected.trim()) return Promise.resolve()
+        const q = new URLSearchParams({ name: selected })
+        if (profileId) q.set("profileId", profileId)
+        return _downloadCsv(
+            `/api/shipping-rates/csv-provinces?${q.toString()}`,
+            "shipping-rates-provinces.csv",
+            setCsvProvLoading,
+        )
     }
 
     const onSubmitSet: SubmitEventHandler<HTMLFormElement> = (e) => {
@@ -549,6 +600,24 @@ export default function ShippingRatesPanel(): ReactNode {
                                 disabled={busy || names.length === 0 || !canSet}
                             >
                                 Set
+                            </button>
+                            <button
+                                type="button"
+                                className="shipping-rates__csv-btn"
+                                onClick={() => void onDownloadCsv()}
+                                disabled={busy || names.length === 0 || csvLoading || csvProvLoading || controlsLocked}
+                                title="Download weight × country rate table as CSV"
+                            >
+                                {csvLoading ? "Downloading…" : "CSV by country ↓"}
+                            </button>
+                            <button
+                                type="button"
+                                className="shipping-rates__csv-btn"
+                                onClick={() => void onDownloadProvinceCsv()}
+                                disabled={busy || names.length === 0 || csvLoading || csvProvLoading || controlsLocked}
+                                title="Download weight × province rate table as CSV (province-restricted countries expanded)"
+                            >
+                                {csvProvLoading ? "Downloading…" : "CSV by province ↓"}
                             </button>
                         </div>
                         <p id="shipping-rate-percent-hint" className="shipping-rates__list-hint">

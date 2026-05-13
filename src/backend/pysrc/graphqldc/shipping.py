@@ -290,9 +290,29 @@ class MethodDefinition:
 
 
 @dataclass(config=_CONFIG)
+class DeliveryCountryCode:
+    countryCode: str | None = None
+    restOfWorld: bool = False
+
+
+@dataclass(config=_CONFIG)
+class DeliveryProvince:
+    code: str
+    name: str | None = None
+
+
+@dataclass(config=_CONFIG)
+class DeliveryCountry:
+    code: DeliveryCountryCode
+    name: str | None = None
+    provinces: list[DeliveryProvince] | None = None
+
+
+@dataclass(config=_CONFIG)
 class ZoneRef:
     id: str
     name: str | None = None
+    countries: list[DeliveryCountry] | None = None
 
 
 @dataclass(config=_CONFIG)
@@ -345,6 +365,7 @@ class CatalogRow:
     zoneId: str
     zoneName: str
     method: MethodDefinition
+    zoneCountries: list[DeliveryCountry] | None = None
 
     def matches_profile_zone(self, profile_id: str | None, zone_id: str | None) -> bool:
         if profile_id is not None and self.profileId != profile_id:

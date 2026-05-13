@@ -27,6 +27,8 @@ from backend.pysrc.shipping_catalog_job import (
 )
 from backend.pysrc.shipping_rates import (
     adjust_rates_by_name_percent,
+    build_rates_csv,
+    build_rates_province_csv,
     preview_rate_changes
 )
 from backend.pysrc.order_carrier_job import (
@@ -34,7 +36,7 @@ from backend.pysrc.order_carrier_job import (
     delete_order_carrier_job,
     take_order_carrier_job,
 )
-from backend.pysrc.order_lookup import lookup_order_by_tracking
+from backend.pysrc.order_lookup import build_orders_csv, lookup_order_by_tracking
 
 
 # ESSENTIAL for Gunicorn to see it.
@@ -421,6 +423,68 @@ def shipping_rates_adjust():
         return flask.jsonify({ "error": str(e) }), 502
 
 
+def _csv_response(csv_text: str, filename: str) -> flask.Response:
+    return flask.Response(
+        csv_text,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _safe_filename(name: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_ " else "_" for c in name).strip()
+
+
+@application.route(Routes.SHIPPING_RATES_CSV, methods=["GET"])
+def shipping_rates_csv():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    name = flask.request.args.get("name", "").strip()
+    if not name:
+        return flask.jsonify({"error": "Missing or invalid name"}), 400
+    profile_id = flask.request.args.get("profileId", "").strip() or None
+    cached = get_shipping_catalog(Server.shop_domain)
+    if cached is None:
+        return flask.jsonify({"error": "Shipping catalog not loaded."}), 400
+    rows, _ = cached
+    csv_text = build_rates_csv(rows, name, profile_id)
+    if not csv_text:
+        return flask.jsonify({"error": "No matching rates found."}), 404
+    return _csv_response(csv_text, f"shipping-rates-{_safe_filename(name)}.csv")
+
+
+@application.route(Routes.SHIPPING_RATES_CSV_PROVINCES, methods=["GET"])
+def shipping_rates_csv_provinces():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    name = flask.request.args.get("name", "").strip()
+    if not name:
+        return flask.jsonify({"error": "Missing or invalid name"}), 400
+    profile_id = flask.request.args.get("profileId", "").strip() or None
+    cached = get_shipping_catalog(Server.shop_domain)
+    if cached is None:
+        return flask.jsonify({"error": "Shipping catalog not loaded."}), 400
+    rows, _ = cached
+    # Check whether there's any rate with this name so we can give a clear error.
+    has_rates = any(
+        r.method.name == name and r.matches_profile_zone(profile_id, None)
+        for r in rows
+    )
+    if not has_rates:
+        return flask.jsonify({"error": "No matching rates found."}), 404
+    csv_text = build_rates_province_csv(rows, name, profile_id)
+    if not csv_text:
+        return flask.jsonify({
+            "error": "No province-specific rates found. "
+                     "Either no countries use province restrictions for this rate, "
+                     "or all provinces share the same price. "
+                     "If you just reloaded the catalog, refresh the shipping data first."
+        }), 404
+    return _csv_response(csv_text, f"shipping-rates-{_safe_filename(name)}-provinces.csv")
+
+
 @application.route(Routes.GRAPHQL_MUTATION_ALLOW, methods=["GET", "POST"])
 def graphql_mutation_allow():
     token = Database.AccessTokens.get_token(Server.shop_domain)
@@ -523,6 +587,35 @@ def order_by_tracking():
         })
     except RuntimeError as e:
         return flask.jsonify({"error": str(e)}), 502
+
+
+@application.route(Routes.ORDER_LOOKUP_CSV, methods=["GET"])
+def order_lookup_csv():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    date_from = flask.request.args.get("dateFrom", "").strip() or None
+    date_to = flask.request.args.get("dateTo", "").strip() or None
+    try:
+        max_orders = max(1, min(10000, int(flask.request.args.get("maxOrders", "1000"))))
+    except (TypeError, ValueError):
+        max_orders = 1000
+    try:
+        packaging_weight_g = max(0, int(flask.request.args.get("packagingWeight", "0")))
+    except (TypeError, ValueError):
+        packaging_weight_g = 0
+    csv_text = build_orders_csv(
+        Server.shop_domain, token,
+        date_from=date_from, date_to=date_to,
+        max_orders=max_orders, packaging_weight_g=packaging_weight_g,
+    )
+    parts: list[str] = []
+    if date_from:
+        parts.append(date_from)
+    if date_to:
+        parts.append(date_to)
+    label = "-".join(parts) if parts else "all"
+    return _csv_response(csv_text, f"orders-{label}.csv")
 
 
 @application.route("/")
