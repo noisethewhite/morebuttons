@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .graphqldc.products import TaggedVariantRow
+from .graphqldc.products import AddVariantCatalogRow, SkuWeightVariantRow, TaggedVariantRow
 from .graphqldc.shipping import CatalogRowList
 
 _shipping_catalog: dict[str, tuple[CatalogRowList, list[str]]] = {}
@@ -44,3 +44,55 @@ def set_tagged_variants_catalog(
 
 def invalidate_tagged_variants_catalog(shop_domain: str, tag: str) -> None:
     _ = _tagged_variants.pop(_tag_key(shop_domain, tag), None)
+
+
+_sku_weight_catalog: dict[str, tuple[list[SkuWeightVariantRow], list[str]]] = {}
+
+
+def _sku_key(shop_domain: str, pattern: str) -> str:
+    return f"{shop_domain}\n{pattern.strip()}"
+
+
+def get_sku_weight_catalog(
+    shop_domain: str, pattern: str
+) -> tuple[list[SkuWeightVariantRow], list[str]] | None:
+    return _sku_weight_catalog.get(_sku_key(shop_domain, pattern))
+
+
+def set_sku_weight_catalog(
+    shop_domain: str,
+    pattern: str,
+    rows: list[SkuWeightVariantRow],
+    warnings: list[str],
+) -> None:
+    _sku_weight_catalog[_sku_key(shop_domain, pattern)] = (rows, list(warnings))
+
+
+def invalidate_sku_weight_catalog(shop_domain: str, pattern: str) -> None:
+    _ = _sku_weight_catalog.pop(_sku_key(shop_domain, pattern), None)
+
+
+_add_variant_catalog: dict[str, tuple[list[AddVariantCatalogRow], list[str]]] = {}
+
+
+def _av_key(shop_domain: str, pattern: str) -> str:
+    return f"{shop_domain}\n{pattern.strip()}"
+
+
+def get_add_variant_catalog(
+    shop_domain: str, pattern: str
+) -> tuple[list[AddVariantCatalogRow], list[str]] | None:
+    return _add_variant_catalog.get(_av_key(shop_domain, pattern))
+
+
+def set_add_variant_catalog(
+    shop_domain: str,
+    pattern: str,
+    rows: list[AddVariantCatalogRow],
+    warnings: list[str],
+) -> None:
+    _add_variant_catalog[_av_key(shop_domain, pattern)] = (rows, list(warnings))
+
+
+def invalidate_add_variant_catalog(shop_domain: str, pattern: str) -> None:
+    _ = _add_variant_catalog.pop(_av_key(shop_domain, pattern), None)
