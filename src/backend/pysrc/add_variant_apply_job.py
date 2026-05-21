@@ -46,12 +46,12 @@ class AddVariantApplyJob:
         product_id, option_name, new_sku = self.tasks.pop(0)
         variant = VariantBulkCreateInputRow(
             price=self.price,
-            sku=new_sku,
             optionValues=[VariantOptionValueInput(optionName=option_name, name=self.option_value)],
             inventoryItem=InventoryItemWeightInput(
                 measurement=InventoryItemMeasurementInput(
                     weight=WeightInput(value=self.weight_g, unit="GRAMS")
-                )
+                ),
+                sku=new_sku,
             ),
         )
         variables = VariantBulkCreateVariables(productId=product_id, variants=[variant])

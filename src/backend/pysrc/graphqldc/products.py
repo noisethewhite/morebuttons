@@ -287,6 +287,7 @@ class InventoryItemMeasurementInput:
 @dataclass(config=_CONFIG)
 class InventoryItemWeightInput:
     measurement: InventoryItemMeasurementInput
+    sku: str | None = None
 
 
 @dataclass(config=_CONFIG)
@@ -444,7 +445,6 @@ class VariantOptionValueInput:
 @dataclass(config=_CONFIG)
 class VariantBulkCreateInputRow:
     price: str
-    sku: str
     optionValues: list[VariantOptionValueInput]
     inventoryItem: InventoryItemWeightInput
 
