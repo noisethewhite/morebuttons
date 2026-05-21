@@ -31,4 +31,4 @@ EXPOSE 8000
 
 # Heroku sets PORT; local Docker Compose leaves it unset → default 8000
 # --forwarded-allow-ips: Heroku router sends X-Forwarded-Proto; needed with ProxyFix for https URLs
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-8000} --forwarded-allow-ips='*' backend.main:application"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-8000} --forwarded-allow-ips='*' --timeout 120 backend.main:application"]

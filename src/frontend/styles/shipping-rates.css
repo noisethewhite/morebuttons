@@ -441,3 +441,78 @@
 .shipping-rates__preview-prices--down {
     color: #b91c1c;
 }
+
+/* SKU weights tab — scan button */
+
+.shipping-rates__scan-btn {
+    font: inherit;
+    font-weight: 600;
+    padding: 0.5rem 1.1rem;
+    border: 1.5px solid #374151;
+    border-radius: 6px;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+    white-space: nowrap;
+    align-self: flex-end;
+}
+
+.shipping-rates__scan-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+}
+
+.shipping-rates__scan-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* SKU weights tab — flat preview table */
+
+.shipping-rates__sku-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+
+.shipping-rates__sku-table th {
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6b7280;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+}
+
+.shipping-rates__sku-table td {
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+    line-height: 1.35;
+}
+
+.shipping-rates__sku-table tr:last-child td {
+    border-bottom: none;
+}
+
+.shipping-rates__sku-table-sku {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.775rem;
+    color: #374151;
+    white-space: nowrap;
+}
+
+.shipping-rates__sku-table-weight {
+    text-align: right;
+    white-space: nowrap;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.shipping-rates__sku-weight--up {
+    color: #15803d;
+}
+
+.shipping-rates__sku-weight--down {
+    color: #b91c1c;
+}

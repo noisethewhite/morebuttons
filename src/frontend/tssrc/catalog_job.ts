@@ -30,11 +30,19 @@ export async function runSteppedCatalogJob(
         clearGraphqlPhase()
         throw new Error("Server did not return a job id.")
     }
+    let stepRetries = 0
+    const MAX_STEP_RETRIES = 3
     for (;;) {
         const stepRes = await AppBridge.fetchWithToken(stepUrl, {
             ...jsonInit,
             body: JSON.stringify({ jobId }),
         })
+        if ((stepRes.status === 502 || stepRes.status === 503) && stepRetries < MAX_STEP_RETRIES) {
+            stepRetries++
+            await new Promise((r) => setTimeout(r, 2000 * stepRetries))
+            continue
+        }
+        stepRetries = 0
         const stepJson = (await stepRes.json()) as {
             done?: boolean
             error?: string

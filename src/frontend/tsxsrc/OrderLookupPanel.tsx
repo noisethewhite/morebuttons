@@ -149,19 +149,22 @@ export default function OrderLookupPanel(): ReactNode {
         setCsvLoading(true)
         setCsvError(null)
         try {
-            const q = new URLSearchParams()
-            if (dateFrom) q.set("dateFrom", dateFrom)
-            if (dateTo) q.set("dateTo", dateTo)
-            q.set("maxOrders", String(Math.max(1, Number(maxOrders) || 1000)))
+            const body: Record<string, unknown> = {}
+            if (dateFrom) body.dateFrom = dateFrom
+            if (dateTo) body.dateTo = dateTo
             const pw = Math.max(0, Number(packagingWeight) || 0)
-            if (pw) q.set("packagingWeight", String(pw))
-            const res = await AppBridge.fetchWithToken(`/api/order-lookup/csv?${q.toString()}`)
-            if (!res.ok) {
-                const text = await res.text().catch(() => "")
-                setCsvError(`Download failed (${res.status})${text ? ": " + text : "."}.`)
+            if (pw) body.packagingWeight = pw
+            const result = await runSteppedCatalogJob(
+                "/api/order-lookup/csv/start",
+                "/api/order-lookup/csv/step",
+                body,
+            )
+            const csvData = result.csvData
+            if (typeof csvData !== "string") {
+                setCsvError("Server returned no CSV data.")
                 return
             }
-            const blob = await res.blob()
+            const blob = new Blob([csvData], { type: "text/csv" })
             const url = URL.createObjectURL(blob)
             const a = document.createElement("a")
             const label = [dateFrom, dateTo].filter(Boolean).join("-") || "all"

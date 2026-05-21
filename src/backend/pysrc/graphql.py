@@ -1,10 +1,29 @@
 from __future__ import annotations
 
+import logging
 import requests
 import flask
 from flask import has_request_context
 from typing import Literal, TypeVar, cast, overload, Protocol, ClassVar
 import dataclasses
+
+_log = logging.getLogger(__name__)
+
+
+def _find_has_next_page(obj: object) -> bool | None:
+    if isinstance(obj, dict):
+        if "hasNextPage" in obj:
+            return bool(obj["hasNextPage"])
+        for v in obj.values():
+            found = _find_has_next_page(v)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _find_has_next_page(item)
+            if found is not None:
+                return found
+    return None
 from .environment import Environment
 from .database import Database
 from .fileloader import FileLoader
@@ -104,7 +123,7 @@ class GraphQL(object):
     @graphql_rate_limit(
         min_interval_seconds=0.15,
         throttle_cooldown_seconds=0.65,
-        max_throttle_retries=12,
+        max_throttle_retries=1,
     )
     def send(
         shop_domain: str,
@@ -125,6 +144,13 @@ class GraphQL(object):
             raise MutationsBlockedError(
                 "Mutations are disabled. Turn on the Allow mutations switch in the GraphQL bar."
             )
+        _log.info(
+            "GQL → kind=%s query=%r after=%r first=%r",
+            kind,
+            variables.get("query") if variables else None,
+            variables.get("after") if variables else None,
+            variables.get("first") if variables else None,
+        )
         resp = requests.post(
             url=f"https://{shop_domain}/admin/api/{Environment.shopify_api_version}/graphql.json",
             headers={
@@ -139,10 +165,11 @@ class GraphQL(object):
                 if variables is not None
                 else {},
             },
-            timeout=20,
+            timeout=10,
         )
         if resp.status_code == 429:
             ra = resp.headers.get("Retry-After")
+            _log.warning("GQL ← 429 throttled Retry-After=%r", ra)
             delay: float | None = None
             if ra is not None:
                 try:
@@ -150,9 +177,11 @@ class GraphQL(object):
                 except ValueError:
                     delay = None
             raise GraphQLThrottled(delay)
+        _log.info("GQL ← status=%d", resp.status_code)
         resp.raise_for_status()
         payload = cast(Json.Value, resp.json())
         if isinstance(payload, dict) and is_graphql_throttled_payload(payload):
+            _log.warning("GQL ← throttled via payload")
             raise GraphQLThrottled()
         increment_request_graphql(kind)
 
@@ -161,6 +190,11 @@ class GraphQL(object):
 
         errs = GraphQL.extract_errors(payload)
         data = GraphQL.response_data(payload)
+        _log.info(
+            "GQL ← hasNextPage=%r errors=%r",
+            _find_has_next_page(payload),
+            errs or None,
+        )
 
         if raise_on_graphql_error:
             if errs:

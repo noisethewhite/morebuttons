@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import csv
-import io
-
 from .fileloader import FileLoader
 from .graphql import GraphQL
 from .graphqldc.orders import (
-    OrderNode,
     OrderResult,
     OrderResultAddress,
     OrdersByTrackingData,
@@ -32,156 +28,77 @@ def lookup_order_by_tracking(
     match client-side.
     """
     query_gql = FileLoader.load("order_by_tracking.gql")
-
-    shopify_query_parts: list[str] = []
-    if date_from:
-        shopify_query_parts.append(f"created_at:>={date_from}")
-    if date_to:
-        shopify_query_parts.append(f"created_at:<={date_to}")
-    shopify_query = " ".join(shopify_query_parts) if shopify_query_parts else None
-
     tracking_lower = tracking_number.lower()
     carrier_lower = carrier.lower() if carrier else None
 
     warnings: list[str] = []
     results: list[OrderResult] = []
-    after: str | None = None
-    scanned = 0
 
-    while True:
-        batch = min(250, max_orders - scanned)
-        if batch <= 0:
-            break
+    for status in ("open", "closed", "cancelled"):
+        query_parts: list[str] = [f"status:{status}"]
+        if date_from:
+            query_parts.append(f"created_at:>={date_from}")
+        if date_to:
+            query_parts.append(f"created_at:<={date_to}")
+        shopify_query = " ".join(query_parts)
 
-        parsed = GraphQL.send(
-            shop_domain,
-            token,
-            query_gql,
-            {"first": batch, "after": after, "query": shopify_query},
-            expected_type=OrdersByTrackingData,
-        )
+        after: str | None = None
+        scanned = 0
 
-        if parsed is None:
-            warnings.append("Could not parse order response.")
-            break
+        while True:
+            batch = min(250, max_orders - scanned)
+            if batch <= 0:
+                break
 
-        conn = parsed.orders
-        scanned += len(conn.edges)
+            parsed = GraphQL.send(
+                shop_domain,
+                token,
+                query_gql,
+                {"first": batch, "after": after, "query": shopify_query},
+                expected_type=OrdersByTrackingData,
+            )
 
-        for edge in conn.edges:
-            node = edge.node
-            if not any(
-                ti.number and ti.number.lower() == tracking_lower
-                for f in node.fulfillments
-                for ti in f.trackingInfo
-            ):
-                continue
-            if carrier_lower and not any(
-                ti.company and ti.company.lower() == carrier_lower
-                for f in node.fulfillments
-                for ti in f.trackingInfo
-            ):
-                continue
-            results.append(_node_to_result(node))
+            if parsed is None:
+                warnings.append(f"Could not parse order response (status:{status}).")
+                break
 
-        nxt = conn.pageInfo.next_page_cursor()
+            conn = parsed.orders
+            scanned += len(conn.edges)
 
-        # Stop as soon as we find the order — tracking numbers are unique per
-        # shipment, so further pages won't add useful results.  Warn if there
-        # are more pages just in case (e.g. split shipments, reused numbers).
+            for edge in conn.edges:
+                node = edge.node
+                if not any(
+                    ti.number and ti.number.lower() == tracking_lower
+                    for f in node.fulfillments
+                    for ti in f.trackingInfo
+                ):
+                    continue
+                if carrier_lower and not any(
+                    ti.company and ti.company.lower() == carrier_lower
+                    for f in node.fulfillments
+                    for ti in f.trackingInfo
+                ):
+                    continue
+                results.append(_node_to_result(node))
+
+            nxt = conn.pageInfo.next_page_cursor()
+
+            if results:
+                if conn.pageInfo.hasNextPage:
+                    warnings.append(
+                        "There may be additional orders with this tracking number."
+                    )
+                break
+
+            if nxt is None or scanned >= max_orders:
+                break
+            after = nxt
+
         if results:
-            if conn.pageInfo.hasNextPage:
-                warnings.append(
-                    "There may be additional orders with this tracking number."
-                )
             break
-
-        if nxt is None or scanned >= max_orders:
-            break
-        after = nxt
 
     return results, warnings
 
-
-def build_orders_csv(
-    shop_domain: str,
-    token: str,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    max_orders: int = 1000,
-    packaging_weight_g: int = 0,
-) -> str:
-    query_gql = FileLoader.load("order_by_tracking.gql")
-
-    shopify_query_parts: list[str] = []
-    if date_from:
-        shopify_query_parts.append(f"created_at:>={date_from}")
-    if date_to:
-        shopify_query_parts.append(f"created_at:<={date_to}")
-    shopify_query = " ".join(shopify_query_parts) if shopify_query_parts else None
-
-    nodes: list[OrderNode] = []
-    after: str | None = None
-    scanned = 0
-
-    while True:
-        batch = min(250, max_orders - scanned)
-        if batch <= 0:
-            break
-        parsed = GraphQL.send(
-            shop_domain, token, query_gql,
-            {"first": batch, "after": after, "query": shopify_query},
-            expected_type=OrdersByTrackingData,
-        )
-        if parsed is None:
-            break
-        conn = parsed.orders
-        scanned += len(conn.edges)
-        for edge in conn.edges:
-            nodes.append(edge.node)
-        nxt = conn.pageInfo.next_page_cursor()
-        if nxt is None or scanned >= max_orders:
-            break
-        after = nxt
-
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow([
-        "Order number", "Status", "Customer", "Address",
-        "Gross weight (g)", "Delivery cost", "Delivery method", "Total",
-        "Tracking numbers",
-    ])
-    for node in nodes:
-        result = _node_to_result(node)
-        tracking_numbers = [
-            ti.number
-            for f in node.fulfillments
-            for ti in f.trackingInfo
-            if ti.number
-        ]
-        addr = result.address
-        address_str = ""
-        if addr:
-            address_str = ", ".join(filter(None, [
-                addr.address1, addr.address2, addr.city,
-                addr.province, addr.zip,
-                addr.country if addr.country else addr.countryCode,
-            ]))
-        weight: int | None = None
-        if result.weightGrams is not None or packaging_weight_g:
-            weight = (result.weightGrams or 0) + packaging_weight_g
-        writer.writerow([
-            result.orderNumber,
-            result.status.replace("_", " "),
-            result.customerName,
-            address_str,
-            weight if weight is not None else "",
-            result.deliveryCost or "",
-            result.deliveryTitle or "",
-            result.orderTotal or "",
-            ", ".join(tracking_numbers),
-        ])
-    return buf.getvalue()
 
 
 def _node_to_result(node: OrderNode) -> OrderResult:
