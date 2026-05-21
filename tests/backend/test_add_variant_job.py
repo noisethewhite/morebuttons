@@ -140,3 +140,55 @@ def test_create_take_delete():
     assert j.pattern == r"FO-\d+"
     delete_add_variant_catalog_job(jid)
     assert take_add_variant_catalog_job(jid) is None
+
+
+from backend.pysrc.add_variant_preview import preview_add_variant
+from backend.pysrc.graphqldc.products import AddVariantCatalogRow
+
+
+def _row(pid, ptitle, prefix, all_skus, option_name="Size"):
+    return AddVariantCatalogRow(
+        productId=pid,
+        productTitle=ptitle,
+        firstOptionName=option_name,
+        baseSkuPrefix=prefix,
+        allVariantSkus=all_skus,
+    )
+
+
+def test_preview_returns_rows_with_computed_sku():
+    rows = [
+        _row("p1", "Product FO-101", "FO-101", ["FO-101-001", "FO-101-005"]),
+        _row("p2", "Product FO-102", "FO-102", ["FO-102-001"]),
+    ]
+    with patch("backend.pysrc.add_variant_preview.get_add_variant_catalog", return_value=(rows, [])):
+        result, warnings = preview_add_variant("shop", r"FO-\d+", "100", "1kg", 1000.0, "29.99")
+    assert len(result) == 2
+    skus = {r.newSku for r in result}
+    assert "FO-101-100" in skus
+    assert "FO-102-100" in skus
+    assert warnings == []
+
+
+def test_preview_raises_value_error_on_conflict():
+    rows = [_row("p1", "FO-101", "FO-101", ["FO-101-001", "FO-101-100"])]
+    with patch("backend.pysrc.add_variant_preview.get_add_variant_catalog", return_value=(rows, [])):
+        with pytest.raises(ValueError, match="already"):
+            preview_add_variant("shop", r"FO-\d+", "100", "1kg", 1000.0, "29.99")
+
+
+def test_preview_raises_runtime_error_when_catalog_not_loaded():
+    with patch("backend.pysrc.add_variant_preview.get_add_variant_catalog", return_value=None):
+        with pytest.raises(RuntimeError):
+            preview_add_variant("shop", r"FO-\d+", "100", "1kg", 1000.0, "29.99")
+
+
+def test_preview_sorted_by_product_title():
+    rows = [
+        _row("p1", "Zeta product", "ZP-001", ["ZP-001-001"]),
+        _row("p2", "Alpha product", "AP-001", ["AP-001-001"]),
+    ]
+    with patch("backend.pysrc.add_variant_preview.get_add_variant_catalog", return_value=(rows, [])):
+        result, _ = preview_add_variant("shop", r"\w+-\d+-\d+", "100", "1kg", 500.0, "9.99")
+    assert result[0].productTitle == "Alpha product"
+    assert result[1].productTitle == "Zeta product"
