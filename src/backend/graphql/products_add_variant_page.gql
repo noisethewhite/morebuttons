@@ -1,0 +1,28 @@
+query ProductsAddVariantPage($first: Int!, $after: String) {
+  products(first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      node {
+        id
+        title
+        options {
+          name
+        }
+        variants(first: 100) {
+          pageInfo {
+            hasNextPage
+          }
+          edges {
+            node {
+              id
+              sku
+            }
+          }
+        }
+      }
+    }
+  }
+}
