@@ -3,8 +3,10 @@ import GraphqlStatsBar from "./GraphqlStatsBar"
 import OrderLookupPanel from "./OrderLookupPanel"
 import ProductTagPricingPanel from "./ProductTagPricingPanel"
 import ShippingRatesPanel from "./ShippingRatesPanel"
+import SkuWeightPanel from "./SkuWeightPanel"
+import AddVariantPanel from "./AddVariantPanel"
 
-type TabId = "shipping" | "products" | "orders"
+type TabId = "shipping" | "products" | "orders" | "skuweight" | "addvariant"
 
 export default function App(): ReactNode {
     const [tab, setTab] = useState<TabId>("shipping")
@@ -59,6 +61,36 @@ export default function App(): ReactNode {
                     >
                         Order lookup
                     </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        id="tab-skuweight"
+                        className={
+                            tab === "skuweight"
+                                ? "app-tabs__tab app-tabs__tab--active"
+                                : "app-tabs__tab"
+                        }
+                        aria-selected={tab === "skuweight"}
+                        aria-controls="panel-skuweight"
+                        onClick={() => setTab("skuweight")}
+                    >
+                        SKU weights
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        id="tab-addvariant"
+                        className={
+                            tab === "addvariant"
+                                ? "app-tabs__tab app-tabs__tab--active"
+                                : "app-tabs__tab"
+                        }
+                        aria-selected={tab === "addvariant"}
+                        aria-controls="panel-addvariant"
+                        onClick={() => setTab("addvariant")}
+                    >
+                        Add variant
+                    </button>
                 </div>
                 <div
                     id="panel-shipping"
@@ -86,6 +118,24 @@ export default function App(): ReactNode {
                     hidden={tab !== "orders"}
                 >
                     <OrderLookupPanel />
+                </div>
+                <div
+                    id="panel-skuweight"
+                    role="tabpanel"
+                    className="app-tabs__panel"
+                    aria-labelledby="tab-skuweight"
+                    hidden={tab !== "skuweight"}
+                >
+                    <SkuWeightPanel />
+                </div>
+                <div
+                    id="panel-addvariant"
+                    role="tabpanel"
+                    className="app-tabs__panel"
+                    aria-labelledby="tab-addvariant"
+                    hidden={tab !== "addvariant"}
+                >
+                    <AddVariantPanel />
                 </div>
             </div>
         </main>
