@@ -199,6 +199,159 @@ class ProductVariantsBulkUpdateData:
     productVariantsBulkUpdate: ProductVariantsBulkUpdatePayload | None = None
 
 
+# --- products_sku_weight_page.gql ---
+
+
+@dataclass(config=_CONFIG)
+class WeightValue:
+    value: float
+    unit: str  # GRAMS, KILOGRAMS, OUNCES, POUNDS
+
+
+@dataclass(config=_CONFIG)
+class InventoryItemMeasurementGql:
+    weight: WeightValue | None = None
+
+
+@dataclass(config=_CONFIG)
+class InventoryItemGql:
+    measurement: InventoryItemMeasurementGql | None = None
+
+
+@dataclass(config=_CONFIG)
+class SkuVariantNode:
+    id: str
+    title: str | None = None
+    sku: str | None = None
+    inventoryItem: InventoryItemGql | None = None
+
+
+@dataclass(config=_CONFIG)
+class SkuProductNode:
+    id: str
+    title: str | None = None
+    variants: Connection[SkuVariantNode] | None = None
+
+
+@dataclass(config=_CONFIG)
+class ProductsSkuWeightQueryData:
+    products: Connection[SkuProductNode]
+
+
+# --- SKU weight app-level rows ---
+
+
+@dataclass(config=_CONFIG)
+class SkuWeightVariantRow:
+    productId: str
+    productTitle: str
+    variantId: str
+    variantTitle: str
+    sku: str
+    weightGrams: float | None = None
+
+    def to_preview_row(self, target_g: float) -> "SkuWeightPreviewRow":
+        current_str = f"{self.weightGrams:g} g" if self.weightGrams is not None else "—"
+        return SkuWeightPreviewRow(
+            variantId=self.variantId,
+            sku=self.sku,
+            productName=self.productTitle,
+            current=current_str,
+            new=f"{target_g:g} g",
+        )
+
+
+@dataclass(config=_CONFIG)
+class SkuWeightPreviewRow(Jsonable):
+    variantId: str
+    sku: str
+    productName: str
+    current: str
+    new: str
+
+
+# --- product_variants_weight_update.gql input types ---
+
+
+@dataclass(config=_CONFIG)
+class WeightInput:
+    value: float
+    unit: str = "GRAMS"
+
+
+@dataclass(config=_CONFIG)
+class InventoryItemMeasurementInput:
+    weight: WeightInput
+
+
+@dataclass(config=_CONFIG)
+class InventoryItemWeightInput:
+    measurement: InventoryItemMeasurementInput
+
+
+@dataclass(config=_CONFIG)
+class VariantWeightBulkInputRow:
+    id: str
+    inventoryItem: InventoryItemWeightInput
+
+
+@dataclass(config=_CONFIG)
+class VariantWeightBulkUpdateVariables(Jsonable):
+    productId: str
+    variants: list[VariantWeightBulkInputRow]
+
+
+# --- SKU weight catalog job step results ---
+
+
+@dataclass(config=_CONFIG)
+class SkuWeightCatalogStepPending(Jsonable):
+    completed: int
+    remaining: int
+    total: int
+    done: Literal[False] = False
+    phase: Literal["sku_weight"] = "sku_weight"
+
+
+@dataclass(config=_CONFIG)
+class SkuWeightCatalogStepDone(Jsonable):
+    completed: int
+    total: int
+    pattern: str
+    variantCount: int
+    warnings: list[str] = field(default_factory=list)
+    done: Literal[True] = True
+    remaining: int = 0
+    phase: Literal["sku_weight"] = "sku_weight"
+
+
+SkuWeightCatalogStepResult = SkuWeightCatalogStepPending | SkuWeightCatalogStepDone
+
+
+@dataclass(config=_CONFIG)
+class SkuWeightApplyStepPending(Jsonable):
+    completed: int
+    remaining: int
+    total: int
+    done: Literal[False] = False
+    phase: Literal["sku_weight_apply"] = "sku_weight_apply"
+
+
+@dataclass(config=_CONFIG)
+class SkuWeightApplyStepDone(Jsonable):
+    completed: int
+    total: int
+    updated: int
+    warnings: list[str] = field(default_factory=list)
+    userErrors: list[str] = field(default_factory=list)
+    done: Literal[True] = True
+    remaining: int = 0
+    phase: Literal["sku_weight_apply"] = "sku_weight_apply"
+
+
+SkuWeightApplyStepResult = SkuWeightApplyStepPending | SkuWeightApplyStepDone
+
+
 # --- product tag catalog job (HTTP step responses) ---
 
 
@@ -228,3 +381,146 @@ class ProductTagCatalogStepDone(Jsonable):
 
 
 ProductTagCatalogStepResult = ProductTagCatalogStepPending | ProductTagCatalogStepDone
+
+
+# --- products_add_variant_page.gql ---
+
+
+@dataclass(config=_CONFIG)
+class ProductOptionNode:
+    name: str
+
+
+@dataclass(config=_CONFIG)
+class AddVariantVariantNode:
+    id: str
+    sku: str | None = None
+
+
+@dataclass(config=_CONFIG)
+class AddVariantProductNode:
+    id: str
+    title: str | None = None
+    options: list[ProductOptionNode] = field(default_factory=list)
+    variants: Connection[AddVariantVariantNode] | None = None
+
+
+@dataclass(config=_CONFIG)
+class ProductsAddVariantQueryData:
+    products: Connection[AddVariantProductNode]
+
+
+# --- add_variant app-level rows ---
+
+
+@dataclass(config=_CONFIG)
+class AddVariantCatalogRow:
+    productId: str
+    productTitle: str
+    firstOptionName: str
+    baseSkuPrefix: str
+    allVariantSkus: list[str]
+
+
+@dataclass(config=_CONFIG)
+class AddVariantPreviewRow(Jsonable):
+    productId: str
+    productTitle: str
+    newSku: str
+    optionValue: str
+    weightGrams: float
+    price: str
+
+
+# --- product_variants_bulk_create.gql input types ---
+
+
+@dataclass(config=_CONFIG)
+class VariantOptionValueInput:
+    optionName: str
+    name: str
+
+
+@dataclass(config=_CONFIG)
+class VariantBulkCreateInputRow:
+    price: str
+    sku: str
+    optionValues: list[VariantOptionValueInput]
+    inventoryItem: InventoryItemWeightInput
+
+
+@dataclass(config=_CONFIG)
+class VariantBulkCreateVariables(Jsonable):
+    productId: str
+    variants: list[VariantBulkCreateInputRow]
+
+
+# --- product_variants_bulk_create.gql response ---
+
+
+@dataclass(config=_CONFIG)
+class ProductVariantsBulkCreatePayload:
+    productVariants: list[ProductVariantSnippet] | None = None
+    userErrors: list[UserError] | None = None
+
+    def user_error_messages(self) -> list[str]:
+        return [ue.message for ue in (self.userErrors or []) if ue.message]
+
+    def mutation_succeeded(self) -> bool:
+        return not self.userErrors
+
+
+@dataclass(config=_CONFIG)
+class ProductVariantsBulkCreateData:
+    productVariantsBulkCreate: ProductVariantsBulkCreatePayload | None = None
+
+
+# --- add_variant catalog job step results ---
+
+
+@dataclass(config=_CONFIG)
+class AddVariantCatalogStepPending(Jsonable):
+    completed: int
+    remaining: int
+    total: int
+    done: Literal[False] = False
+    phase: Literal["add_variant"] = "add_variant"
+
+
+@dataclass(config=_CONFIG)
+class AddVariantCatalogStepDone(Jsonable):
+    completed: int
+    total: int
+    pattern: str
+    productCount: int
+    warnings: list[str] = field(default_factory=list)
+    done: Literal[True] = True
+    remaining: int = 0
+    phase: Literal["add_variant"] = "add_variant"
+
+
+AddVariantCatalogStepResult = AddVariantCatalogStepPending | AddVariantCatalogStepDone
+
+
+@dataclass(config=_CONFIG)
+class AddVariantApplyStepPending(Jsonable):
+    completed: int
+    remaining: int
+    total: int
+    done: Literal[False] = False
+    phase: Literal["add_variant_apply"] = "add_variant_apply"
+
+
+@dataclass(config=_CONFIG)
+class AddVariantApplyStepDone(Jsonable):
+    completed: int
+    total: int
+    updated: int
+    warnings: list[str] = field(default_factory=list)
+    userErrors: list[str] = field(default_factory=list)
+    done: Literal[True] = True
+    remaining: int = 0
+    phase: Literal["add_variant_apply"] = "add_variant_apply"
+
+
+AddVariantApplyStepResult = AddVariantApplyStepPending | AddVariantApplyStepDone
