@@ -1,5 +1,13 @@
+import logging
 import sys
 from dataclasses import asdict
+
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+import requests as _requests
 from typing import Literal, cast
 from backend.pysrc.web_types import Json
 import flask
@@ -36,7 +44,34 @@ from backend.pysrc.order_carrier_job import (
     delete_order_carrier_job,
     take_order_carrier_job,
 )
-from backend.pysrc.order_lookup import build_orders_csv, lookup_order_by_tracking
+from backend.pysrc.order_lookup import lookup_order_by_tracking
+from backend.pysrc.order_lookup_csv_job import (
+    create_order_lookup_csv_job,
+    delete_order_lookup_csv_job,
+    take_order_lookup_csv_job,
+)
+from backend.pysrc.sku_weight_job import (
+    create_sku_weight_catalog_job,
+    delete_sku_weight_catalog_job,
+    take_sku_weight_catalog_job,
+)
+from backend.pysrc.sku_weight_apply_job import (
+    create_sku_weight_apply_job,
+    delete_sku_weight_apply_job,
+    take_sku_weight_apply_job,
+)
+from backend.pysrc.sku_weight_pricing import preview_sku_weight_changes
+from backend.pysrc.add_variant_job import (
+    create_add_variant_catalog_job,
+    delete_add_variant_catalog_job,
+    take_add_variant_catalog_job,
+)
+from backend.pysrc.add_variant_apply_job import (
+    create_add_variant_apply_job,
+    delete_add_variant_apply_job,
+    take_add_variant_apply_job,
+)
+from backend.pysrc.add_variant_preview import preview_add_variant
 
 
 # ESSENTIAL for Gunicorn to see it.
@@ -551,7 +586,7 @@ def order_carrier_catalog_step():
         return flask.jsonify({"error": "Unknown or expired job"}), 404
     try:
         result = job.step()
-    except RuntimeError as e:
+    except (RuntimeError, _requests.exceptions.RequestException) as e:
         return flask.jsonify({"error": str(e)}), 502
     flask.g.graphql_phase_total = result.total
     flask.g.graphql_phase_done = result.completed
@@ -589,33 +624,319 @@ def order_by_tracking():
         return flask.jsonify({"error": str(e)}), 502
 
 
-@application.route(Routes.ORDER_LOOKUP_CSV, methods=["GET"])
-def order_lookup_csv():
+@application.route(Routes.SKU_WEIGHT_CATALOG_START, methods=["POST"])
+def sku_weight_catalog_start():
     token = Database.AccessTokens.get_token(Server.shop_domain)
     if not token:
         return flask.jsonify({"error": "Not installed"}), 401
-    date_from = flask.request.args.get("dateFrom", "").strip() or None
-    date_to = flask.request.args.get("dateTo", "").strip() or None
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    pattern_raw = body.get("pattern")
+    pattern = pattern_raw.strip() if isinstance(pattern_raw, str) else ""
+    if not pattern:
+        return flask.jsonify({"error": "Missing pattern"}), 400
+    jid = create_sku_weight_catalog_job(Server.shop_domain, token, pattern)
+    return flask.jsonify({"jobId": jid})
+
+
+@application.route(Routes.SKU_WEIGHT_CATALOG_STEP, methods=["POST"])
+def sku_weight_catalog_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({"error": "Missing jobId"}), 400
+    job = take_sku_weight_catalog_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({"error": "Unknown or expired job"}), 404
     try:
-        max_orders = max(1, min(10000, int(flask.request.args.get("maxOrders", "1000"))))
+        result = job.step()
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 502
+    flask.g.graphql_phase_total = result.total
+    flask.g.graphql_phase_done = result.completed
+    if result.done:
+        delete_sku_weight_catalog_job(job_id.strip())
+    return flask.jsonify(result.to_json())
+
+
+@application.route(Routes.SKU_WEIGHT_PREVIEW, methods=["GET"])
+def sku_weight_preview():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    pattern = flask.request.args.get("pattern", "").strip()
+    if not pattern:
+        return flask.jsonify({"error": "Missing pattern"}), 400
+    weight_raw = flask.request.args.get("weight", "").strip()
+    try:
+        target_g = float(weight_raw)
     except (TypeError, ValueError):
-        max_orders = 1000
+        return flask.jsonify({"error": "Invalid weight"}), 400
+    if target_g < 0:
+        return flask.jsonify({"error": "Weight must be non-negative"}), 400
     try:
-        packaging_weight_g = max(0, int(flask.request.args.get("packagingWeight", "0")))
+        rows, warnings = preview_sku_weight_changes(Server.shop_domain, pattern, target_g)
+        return flask.jsonify({
+            "rows": [r.to_json() for r in rows],
+            "warnings": warnings,
+        })
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 400
+
+
+@application.route(Routes.SKU_WEIGHT_SET_START, methods=["POST"])
+def sku_weight_set_start():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    pattern_raw = body.get("pattern")
+    weight_raw = body.get("weight")
+    pattern = pattern_raw.strip() if isinstance(pattern_raw, str) else ""
+    if not pattern:
+        return flask.jsonify({"error": "Missing pattern"}), 400
+    if isinstance(weight_raw, bool) or weight_raw is None:
+        return flask.jsonify({"error": "Invalid weight"}), 400
+    try:
+        target_g = float(
+            weight_raw if isinstance(weight_raw, (int, float)) else str(weight_raw).strip()
+        )
+    except (TypeError, ValueError):
+        return flask.jsonify({"error": "Invalid weight"}), 400
+    if target_g < 0:
+        return flask.jsonify({"error": "Weight must be non-negative"}), 400
+    try:
+        jid = create_sku_weight_apply_job(Server.shop_domain, token, pattern, target_g)
+        return flask.jsonify({"jobId": jid})
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 400
+
+
+@application.route(Routes.SKU_WEIGHT_SET_STEP, methods=["POST"])
+def sku_weight_set_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({"error": "Missing jobId"}), 400
+    job = take_sku_weight_apply_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({"error": "Unknown or expired job"}), 404
+    try:
+        result = job.step()
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 502
+    flask.g.graphql_phase_total = result.total
+    flask.g.graphql_phase_done = result.completed
+    if result.done:
+        delete_sku_weight_apply_job(job_id.strip())
+    return flask.jsonify(result.to_json())
+
+
+@application.route(Routes.ORDER_LOOKUP_CSV_START, methods=["POST"])
+def order_lookup_csv_start():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    date_from = str(body.get("dateFrom", "")).strip() or None
+    date_to = str(body.get("dateTo", "")).strip() or None
+    try:
+        packaging_weight_g = max(0, int(body.get("packagingWeight", 0)))
     except (TypeError, ValueError):
         packaging_weight_g = 0
-    csv_text = build_orders_csv(
+    jid = create_order_lookup_csv_job(
         Server.shop_domain, token,
         date_from=date_from, date_to=date_to,
-        max_orders=max_orders, packaging_weight_g=packaging_weight_g,
+        packaging_weight_g=packaging_weight_g,
     )
-    parts: list[str] = []
-    if date_from:
-        parts.append(date_from)
-    if date_to:
-        parts.append(date_to)
-    label = "-".join(parts) if parts else "all"
-    return _csv_response(csv_text, f"orders-{label}.csv")
+    return flask.jsonify({"jobId": jid})
+
+
+@application.route(Routes.ORDER_LOOKUP_CSV_STEP, methods=["POST"])
+def order_lookup_csv_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({"error": "Missing jobId"}), 400
+    job = take_order_lookup_csv_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({"error": "Unknown or expired job"}), 404
+    try:
+        result = job.step()
+    except (RuntimeError, _requests.exceptions.RequestException) as e:
+        return flask.jsonify({"error": str(e)}), 502
+    flask.g.graphql_phase_total = result.total
+    flask.g.graphql_phase_done = result.completed
+    if result.done:
+        delete_order_lookup_csv_job(job_id.strip())
+    return flask.jsonify(result.to_json())
+
+
+@application.route(Routes.ADD_VARIANT_CATALOG_START, methods=["POST"])
+def add_variant_catalog_start():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    pattern_raw = body.get("pattern")
+    pattern = pattern_raw.strip() if isinstance(pattern_raw, str) else ""
+    if not pattern:
+        return flask.jsonify({"error": "Missing pattern"}), 400
+    jid = create_add_variant_catalog_job(Server.shop_domain, token, pattern)
+    return flask.jsonify({"jobId": jid})
+
+
+@application.route(Routes.ADD_VARIANT_CATALOG_STEP, methods=["POST"])
+def add_variant_catalog_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({"error": "Missing jobId"}), 400
+    job = take_add_variant_catalog_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({"error": "Unknown or expired job"}), 404
+    try:
+        result = job.step()
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 502
+    flask.g.graphql_phase_total = result.total
+    flask.g.graphql_phase_done = result.completed
+    if result.done:
+        delete_add_variant_catalog_job(job_id.strip())
+    return flask.jsonify(result.to_json())
+
+
+@application.route(Routes.ADD_VARIANT_PREVIEW, methods=["GET"])
+def add_variant_preview():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    pattern = flask.request.args.get("pattern", "").strip()
+    if not pattern:
+        return flask.jsonify({"error": "Missing pattern"}), 400
+    suffix = flask.request.args.get("suffix", "").strip()
+    if not suffix:
+        return flask.jsonify({"error": "Missing suffix"}), 400
+    option_value = flask.request.args.get("optionValue", "").strip()
+    if not option_value:
+        return flask.jsonify({"error": "Missing optionValue"}), 400
+    weight_raw = flask.request.args.get("weight", "").strip()
+    try:
+        weight_g = float(weight_raw)
+    except (TypeError, ValueError):
+        return flask.jsonify({"error": "Invalid weight"}), 400
+    if weight_g < 0:
+        return flask.jsonify({"error": "Weight must be non-negative"}), 400
+    price = flask.request.args.get("price", "").strip()
+    if not price:
+        return flask.jsonify({"error": "Missing price"}), 400
+    try:
+        price_f = float(price)
+    except (TypeError, ValueError):
+        return flask.jsonify({"error": "Invalid price"}), 400
+    if price_f <= 0:
+        return flask.jsonify({"error": "Price must be greater than 0"}), 400
+    try:
+        rows, warnings = preview_add_variant(
+            Server.shop_domain, pattern, suffix, option_value, weight_g, price
+        )
+        return flask.jsonify({"rows": [r.to_json() for r in rows], "warnings": warnings})
+    except ValueError as e:
+        return flask.jsonify({"error": str(e)}), 409
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 400
+
+
+@application.route(Routes.ADD_VARIANT_SET_START, methods=["POST"])
+def add_variant_set_start():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    pattern_raw = body.get("pattern")
+    pattern = pattern_raw.strip() if isinstance(pattern_raw, str) else ""
+    if not pattern:
+        return flask.jsonify({"error": "Missing pattern"}), 400
+    suffix_raw = body.get("suffix")
+    suffix = suffix_raw.strip() if isinstance(suffix_raw, str) else ""
+    if not suffix:
+        return flask.jsonify({"error": "Missing suffix"}), 400
+    option_value_raw = body.get("optionValue")
+    option_value = option_value_raw.strip() if isinstance(option_value_raw, str) else ""
+    if not option_value:
+        return flask.jsonify({"error": "Missing optionValue"}), 400
+    weight_raw = body.get("weight")
+    if isinstance(weight_raw, bool) or weight_raw is None:
+        return flask.jsonify({"error": "Invalid weight"}), 400
+    try:
+        weight_g = float(
+            weight_raw if isinstance(weight_raw, (int, float)) else str(weight_raw).strip()
+        )
+    except (TypeError, ValueError):
+        return flask.jsonify({"error": "Invalid weight"}), 400
+    if weight_g < 0:
+        return flask.jsonify({"error": "Weight must be non-negative"}), 400
+    price_raw = body.get("price")
+    price = price_raw.strip() if isinstance(price_raw, str) else ""
+    if not price:
+        return flask.jsonify({"error": "Missing price"}), 400
+    try:
+        price_f = float(price)
+    except (TypeError, ValueError):
+        return flask.jsonify({"error": "Invalid price"}), 400
+    if price_f <= 0:
+        return flask.jsonify({"error": "Price must be greater than 0"}), 400
+    try:
+        jid = create_add_variant_apply_job(
+            Server.shop_domain, token, pattern, suffix, option_value, weight_g, price
+        )
+        return flask.jsonify({"jobId": jid})
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 400
+
+
+@application.route(Routes.ADD_VARIANT_SET_STEP, methods=["POST"])
+def add_variant_set_step():
+    token = Database.AccessTokens.get_token(Server.shop_domain)
+    if not token:
+        return flask.jsonify({"error": "Not installed"}), 401
+    raw_body = cast(Json.Value, flask.request.get_json(silent=True))
+    body = raw_body if isinstance(raw_body, dict) else {}
+    job_id = body.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        return flask.jsonify({"error": "Missing jobId"}), 400
+    job = take_add_variant_apply_job(job_id.strip())
+    if job is None:
+        return flask.jsonify({"error": "Unknown or expired job"}), 404
+    try:
+        result = job.step()
+    except RuntimeError as e:
+        return flask.jsonify({"error": str(e)}), 502
+    flask.g.graphql_phase_total = result.total
+    flask.g.graphql_phase_done = result.completed
+    if result.done:
+        delete_add_variant_apply_job(job_id.strip())
+    return flask.jsonify(result.to_json())
 
 
 @application.route("/")
